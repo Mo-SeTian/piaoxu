@@ -1,0 +1,14 @@
+name: piaoxu
+services:
+  piaoxu:
+    build: .
+    dns:
+      - "${PIAOXU_DNS:-223.5.5.5}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8765:8000"
+    volumes:
+      - ${PIAOXU_CONFIG_DIR:-./config}:/config
+      - ${PIAOXU_DATA_DIR:-./data}:/data
+    restart: unless-stopped
