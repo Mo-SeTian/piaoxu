@@ -640,7 +640,7 @@ def summary():
     return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid'],'unreimbursed_amount_cents':counts['unpaid_amount']}
 
 @app.get('/api/emails')
-def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','none','recognized','failed']='all', attention: bool=False):
+def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','has','suspected','none','recognized','failed','deleted','duplicate','pending','processing_failed','link_pending']='all', attention: bool=False):
     with connect() as db:
         query='''SELECT e.id,e.account_id,e.sender,e.subject,e.received_at,e.status,e.folder,a.name account_name,
                         COALESCE(c.invoice_count,0) invoice_count,COALESCE(c.recognized_count,0) recognized_count,
@@ -655,8 +655,15 @@ def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,
         if account_id: where.append('e.account_id=?');args.append(account_id)
         if attention: where.append("e.status IN ('导入失败','发票链接待处理')")
         filters={'invoice':'COALESCE(c.invoice_count,0)>0',
+                 'has':'COALESCE(c.recognized_count,0)>0 OR COALESCE(c.duplicate_count,0)>0',
+                 'suspected':'COALESCE(c.invoice_count,0)>0 AND COALESCE(c.recognized_count,0)=0 AND COALESCE(c.duplicate_count,0)=0',
                  'none':"COALESCE(c.invoice_count,0)=0 AND e.status NOT IN ('发票已删除','待处理','导入失败','发票链接待处理','识别失败')",
-                 'recognized':'COALESCE(c.recognized_count,0)>0','failed':'COALESCE(c.failed_count,0)>0'}
+                 'recognized':'COALESCE(c.recognized_count,0)>0','failed':'COALESCE(c.failed_count,0)>0',
+                 'deleted':"COALESCE(c.invoice_count,0)=0 AND e.status='发票已删除'",
+                 'duplicate':'COALESCE(c.duplicate_count,0)>0',
+                 'pending':"e.status='待处理' OR (COALESCE(c.invoice_count,0)>0 AND COALESCE(c.recognized_count,0)=0 AND COALESCE(c.failed_count,0)=0 AND COALESCE(c.duplicate_count,0)=0)",
+                 'processing_failed':"e.status='导入失败' OR (e.status='识别失败' AND COALESCE(c.invoice_count,0)=0)",
+                 'link_pending':"e.status='发票链接待处理'"}
         if invoice_status in filters: where.append('('+filters[invoice_status]+')')
         clause=(' WHERE '+' AND '.join(where)) if where else ''
         sql=query+clause

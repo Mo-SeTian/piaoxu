@@ -606,6 +606,61 @@ def test_invoice_and_email_pagination_filters(isolated_storage):
     assert messages['total']==55 and len(messages['items'])==5
 
 
+def test_email_filters_cover_visible_invoice_states(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    account=client.post('/api/accounts',json={'name':'状态测试邮箱','email':'filter-test@qq.com','auth_code':'fake'}).json()['id']
+    other=client.post('/api/accounts',json={'name':'其他邮箱','email':'other-filter@qq.com','auth_code':'fake'}).json()['id']
+    cases={
+        'none':('普通邮件',[]),
+        'deleted':('发票已删除',[]),
+        'recognized':('已识别',[('已识别','')]),
+        'failed':('识别失败',[('识别失败','')]),
+        'duplicate':('已识别',[('识别失败','confirmed')]),
+        'pending_invoice':('待处理',[('待处理','')]),
+        'pending_mail':('待处理',[]),
+        'mail_error':('导入失败',[]),
+        'empty_failed':('识别失败',[]),
+        'link_pending':('发票链接待处理',[]),
+        'mixed':('识别失败',[('已识别',''),('识别失败','')]),
+        'partial_error':('导入失败',[('已识别','')]),
+        'partial_link':('发票链接待处理',[('已识别','')]),
+    }
+    ids={}
+    with db.connect() as conn:
+        for name,(status,invoices) in cases.items():
+            ident=conn.execute('INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status) VALUES(?,?,?,?,?,?)',(account,'FILTER',name,'测试发件人',name,status)).lastrowid
+            ids[name]=ident
+            for index,(recognition,duplicate) in enumerate(invoices):
+                key=f'filter-{name}-{index}'
+                invoice=conn.execute('INSERT INTO invoices(sha256,original_name,stored_name,source,email_id,imported_at,recognition_status,duplicate_state) VALUES(?,?,?,?,?,?,?,?)',(key,key+'.pdf',key+'.pdf','邮件',ident,'2026-11-03',recognition,duplicate)).lastrowid
+                conn.execute('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',(invoice,ident))
+        other_deleted=conn.execute('INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status) VALUES(?,?,?,?,?,?)',(other,'FILTER','deleted','测试发件人','其他邮箱的已删除发票','发票已删除')).lastrowid
+    expected={
+        'all':set(cases),
+        'invoice':{'recognized','failed','duplicate','pending_invoice','mixed','partial_error','partial_link'},
+        'has':{'recognized','duplicate','mixed','partial_error','partial_link'},
+        'suspected':{'failed','pending_invoice'},
+        'none':{'none'},
+        'recognized':{'recognized','mixed','partial_error','partial_link'},
+        'failed':{'failed','mixed'},
+        'deleted':{'deleted'},
+        'duplicate':{'duplicate'},
+        'pending':{'pending_invoice','pending_mail'},
+        'processing_failed':{'mail_error','empty_failed','partial_error'},
+        'link_pending':{'link_pending','partial_link'},
+    }
+    for status,names in expected.items():
+        response=client.get('/api/emails',params={'invoice_status':status,'account_id':account,'limit':50})
+        assert response.status_code==200,(status,response.text)
+        result=response.json()
+        assert result['total']==len(names),status
+        assert {m['id'] for m in result['items']}=={ids[name] for name in names},status
+    for offset in (0,1):
+        result=client.get('/api/emails',params={'invoice_status':'deleted','limit':1,'offset':offset}).json()
+        assert result['total']==2 and result['items'][0]['id']==[other_deleted,ids['deleted']][offset]
+    assert client.get('/api/emails',params={'invoice_status':'unknown'}).status_code==422
+
+
 def test_external_image_rejects_private_destinations_and_redirects(monkeypatch):
     import socket
     import app.download as download

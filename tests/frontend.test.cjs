@@ -65,3 +65,15 @@ test('finishing mail recognition does not replace an open settings form',async()
   h.context.load=async()=>assert.fail('Settings must preserve unfinished edits');
   await h.run();assert.equal(h.status.textContent,'已存在 1 张');
 });
+test('new mail filters keep server results and their pagination total',()=>{
+  const context=vm.createContext({Map,Set,
+    state:{account:'7',emailFilter:'deleted',accounts:[{id:7,name:'工作邮箱'}],emails:[{id:23,account_id:7,status:'发票已删除',invoice_count:0,recognized_count:0,failed_count:0,duplicate_count:0,sender:'测试发件人',subject:'保留邮件以重新识别',folder:'INBOX',account_name:'工作邮箱',received_at:'2026-11-03'}],emailTotal:51,emailPage:1},
+    esc:value=>String(value??''),uiIcon:name=>`<svg data-icon="${name}"></svg>`,date:value=>value,
+    header:()=>'',empty:message=>message,listPager:(total,page)=>`pager:${total}:${page}`,
+    mailReprocessBusy:new Set(),mailReprocessFeedback:new Map()});
+  vm.runInContext(section('function emailStatusFlags(', '\nfunction failedPage('),context);
+  const html=context.emailsPage();
+  assert.match(html,/data-email="23"/);assert.match(html,/pager:51:1/);
+  assert.match(html,/<option value="deleted" selected>发票已删除<\/option>/);
+  assert.match(html,/<option value="has" >有发票<\/option>/);
+});
