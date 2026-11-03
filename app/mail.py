@@ -207,7 +207,10 @@ def reprocess_email(email_id):
     with connect() as db:
         entry=db.execute('SELECT account_id FROM emails WHERE id=?',(email_id,)).fetchone()
     if not entry: raise MailReprocessError('邮件不存在')
-    with account_lock(entry['account_id']):
+    lock=account_lock(entry['account_id'])
+    if not lock.acquire(blocking=False):
+        raise MailReprocessError('该邮箱正在同步或处理其他邮件，请稍后重试')
+    try:
         with connect() as db:
             row=db.execute('''SELECT e.id,e.uid,e.uidvalidity,e.folder,e.status,a.id account_id,a.email,a.secret
                               FROM emails e JOIN accounts a ON a.id=e.account_id WHERE e.id=?''',(email_id,)).fetchone()
@@ -230,6 +233,8 @@ def reprocess_email(email_id):
             if mail:
                 try: mail.logout()
                 except Exception: pass
+    finally:
+        lock.release()
 
 def refresh_email_html(email_id):
     with connect() as db:

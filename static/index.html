@@ -1,1 +1,55 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>票序 · 发票管理</title><link rel="stylesheet" href="/style.css?v=23"></head><body><section class="login-screen" id="login-screen" hidden><div class="login-panel"><div class="login-brand"><span class="mark">票</span><span>票序<small>INVOICE SPACE</small></span></div><h1>登录票序</h1><p class="login-intro">登录后查看你的发票和邮件。</p><form id="login-form"><label for="login-username">账号</label><input id="login-username" name="username" autocomplete="username" required maxlength="100"><label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128"><p class="login-error" role="alert" aria-live="polite"></p><button class="button primary" type="submit">登录</button></form><p class="login-note">首次登录后，请在“登录账号”中修改默认密码。</p></div></section><div class="shell" hidden><aside><button id="nav-toggle" class="button" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="展开菜单"><svg aria-hidden="true" class="nav-icon menu-icon"><use href="/icons.svg?v=3#menu"></use></svg></button><div class="brand"><span class="mark">票</span><div>票序<small>INVOICE SPACE</small></div></div><div class="nav-label">工作空间</div><nav id="main-nav" aria-label="主导航"><button data-page="invoices" class="active"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#files"></use></svg>发票库</button><button data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#folder"></use></svg>报销组</button><button data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#mail"></use></svg>全部邮件</button><button data-page="failed"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#circle-alert"></use></svg>识别失败 <b id="failed-count"></b></button><button data-page="accounts"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#mail-plus"></use></svg>邮箱管理</button><button data-page="ai"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=5#sparkles"></use></svg>AI 识别</button><button data-page="settings"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#settings"></use></svg>命名规则</button><button data-page="backup"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=4#database"></use></svg>备份与恢复</button><button data-page="security"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=5#user-round"></use></svg>登录账号</button></nav><div class="side-foot" id="side-foot">本地发票管理</div><nav class="mobile-nav" aria-label="移动端导航"><button type="button" data-page="invoices"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#files"></use></svg><span>发票</span></button><button type="button" data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#folder"></use></svg><span>报销组</span></button><button type="button" data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#mail"></use></svg><span>邮件</span></button><button type="button" id="mobile-more" aria-expanded="false" aria-controls="main-nav"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=2#settings"></use></svg><span>更多</span></button></nav></aside><div id="nav-backdrop" hidden aria-hidden="true"></div><main><header><span>个人工作空间 / <span id="breadcrumb">发票库</span></span><span>票序</span></header><div class="content" id="content"></div></main></div><dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog><div class="toast" id="toast" role="status" aria-live="polite"></div><script src="/app.js?v=23" defer></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>票序 · 发票管理</title>
+  <link rel="preload" href="/fonts/noto-serif-sc-ui.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css?v=26">
+</head>
+<body>
+  <section class="login-screen" id="login-screen" hidden>
+    <div class="login-panel">
+      <div class="login-brand"><svg class="brand-icon" aria-hidden="true"><use href="/icons.svg?v=6#files"></use></svg><span>票序</span></div>
+      <h1>登录票序</h1>
+      <p class="login-intro">收好每一张发票，理清每一笔支出。</p>
+      <form id="login-form">
+        <label for="login-username">账号</label><input id="login-username" name="username" autocomplete="username" required maxlength="100">
+        <label for="login-password">密码</label><input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+        <p class="login-error" role="alert" aria-live="polite"></p>
+        <button class="button primary" type="submit">登录</button>
+      </form>
+      <p class="login-note">首次登录后，可在“偏好设置”中修改账号与密码。</p>
+    </div>
+  </section>
+  <div class="shell" hidden>
+    <aside>
+      <button id="nav-toggle" class="icon-button" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="展开菜单"><svg aria-hidden="true" class="nav-icon menu-icon"><use href="/icons.svg?v=6#menu"></use></svg></button>
+      <div class="brand"><svg class="brand-icon" aria-hidden="true"><use href="/icons.svg?v=6#files"></use></svg><span>票序</span></div>
+      <div class="nav-label">票据管理</div>
+      <nav id="main-nav" aria-label="主导航">
+        <button data-page="invoices" class="active"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg>发票库</button>
+        <button data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#folder"></use></svg>报销组</button>
+        <button data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail"></use></svg>全部邮件</button>
+        <button data-page="failed"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#circle-alert"></use></svg>识别失败 <b id="failed-count"></b></button>
+        <span class="nav-section-label">管理</span>
+        <button data-page="accounts"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail-plus"></use></svg>邮箱管理</button>
+        <button data-page="ai"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#scan-text"></use></svg>AI 辅助识别</button>
+        <button data-page="settings"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#settings"></use></svg>偏好设置</button>
+      </nav>
+      <div class="side-foot" id="side-foot">还未连接邮箱</div>
+      <nav class="mobile-nav" aria-label="移动端导航">
+        <button type="button" data-page="invoices"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg><span>发票</span></button>
+        <button type="button" data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#folder"></use></svg><span>报销组</span></button>
+        <button type="button" data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail"></use></svg><span>邮件</span></button>
+        <button type="button" id="mobile-more" aria-expanded="false" aria-controls="main-nav"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#ellipsis"></use></svg><span>更多</span></button>
+      </nav>
+    </aside>
+    <div id="nav-backdrop" hidden aria-hidden="true"></div>
+    <main><header><span id="breadcrumb">发票库</span></header><div class="content" id="content"></div></main>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><form method="dialog" id="dialog-form"></form></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=26" defer></script>
+</body>
+</html>

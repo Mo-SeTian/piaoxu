@@ -318,6 +318,29 @@ def test_reprocess_hides_mailbox_errors(isolated_storage,monkeypatch):
     monkeypatch.setattr(mail.imaplib,'IMAP4_SSL',FailedMailbox)
     response=client.post(f'/api/emails/{email_id}/reprocess')
     assert response.status_code==502 and 'private' not in response.text
+    assert not mail.account_lock(account).locked()
+
+
+def test_reprocess_reports_busy_mailbox_without_waiting(isolated_storage,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import app.mail as mail
+    config,data,client,db,service,backup=isolated_storage
+    account=client.post('/api/accounts',json={'name':'测试邮箱','email':'busy-test@qq.com','auth_code':'fake'}).json()['id']
+    with db.connect() as conn:
+        email_id=conn.execute('INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status,folder) VALUES(?,?,?,?,?,?,?)',(account,'INBOX\x001','1','','测试邮件','普通邮件','INBOX')).lastrowid
+    def unexpected_connection(*args,**kwargs):
+        raise AssertionError('A busy mailbox must not start another connection')
+    monkeypatch.setattr(mail.imaplib,'IMAP4_SSL',unexpected_connection)
+    lock=mail.account_lock(account)
+    pool=ThreadPoolExecutor(max_workers=1)
+    lock.acquire()
+    try:
+        future=pool.submit(client.post,f'/api/emails/{email_id}/reprocess')
+        response=future.result(timeout=2)
+        assert response.status_code==409 and '正在同步' in response.json()['detail']
+    finally:
+        lock.release()
+        pool.shutdown(wait=True)
 
 
 def test_email_invoice_labels_report_mixed_results(isolated_storage):
@@ -571,6 +594,8 @@ def test_invoice_and_email_pagination_filters(isolated_storage):
         for i in range(55):
             conn.execute("INSERT INTO invoices(sha256,original_name,stored_name,source,imported_at,buyer,seller,amount_cents,invoice_date,invoice_number,recognition_status,reimbursed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",(f'hash-{i}',f'{i}.pdf',f'{i}.pdf','本地上传','2026-01-01','买方',f'商户{i}',100,'2026-01-01',f'NUMBER-{i}','已识别',i%2))
             conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status) VALUES(?,?,?,?,?,?)",(account,'INBOX',str(i),'sender',f'subject {i}','普通邮件'))
+    summary=client.get('/api/summary').json()
+    assert summary['invoices']==55 and summary['unreimbursed']==28 and summary['unreimbursed_amount_cents']==2800
     first=client.get('/api/invoices',params={'limit':50}).json();second=client.get('/api/invoices',params={'limit':50,'offset':50}).json()
     assert first['total']==second['total']==55 and len(first['items'])==50 and len(second['items'])==5
     assert not {x['id'] for x in first['items']} & {x['id'] for x in second['items']}

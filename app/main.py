@@ -636,8 +636,8 @@ def summary():
     with connect() as db:
         failed=db.execute("SELECT count(*) FROM invoices WHERE recognition_status='识别失败' AND duplicate_state<>'confirmed'").fetchone()[0]
         pending=db.execute("SELECT count(*) FROM emails WHERE status IN ('导入失败','发票链接待处理')").fetchone()[0]
-        counts=db.execute("SELECT count(*) total,COALESCE(sum(CASE WHEN reimbursed=0 THEN 1 ELSE 0 END),0) unpaid FROM invoices WHERE recognition_status='已识别'").fetchone()
-    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid']}
+        counts=db.execute("SELECT count(*) total,COALESCE(sum(CASE WHEN reimbursed=0 THEN 1 ELSE 0 END),0) unpaid,COALESCE(sum(CASE WHEN reimbursed=0 THEN amount_cents ELSE 0 END),0) unpaid_amount FROM invoices WHERE recognition_status='已识别'").fetchone()
+    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid'],'unreimbursed_amount_cents':counts['unpaid_amount']}
 
 @app.get('/api/emails')
 def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','none','recognized','failed']='all', attention: bool=False):

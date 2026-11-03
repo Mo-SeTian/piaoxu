@@ -1,0 +1,13 @@
+name: piaoxu
+services:
+  piaoxu:
+    image: mosetian/piaoxu:latest
+    environment:
+      PUID: "1000"
+      PGID: "10"
+    restart: unless-stopped
+    ports:
+      - "8765:8000"
+    volumes:
+      - "./config:/config"
+      - "./data:/data"
