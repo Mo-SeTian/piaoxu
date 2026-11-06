@@ -5,6 +5,8 @@ import os
 import re
 import secrets
 import threading
+import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from cryptography.fernet import Fernet
@@ -72,6 +74,24 @@ def assist(path, fields, reason, force=False):
         return fields, (reason + '；' if reason else '') + 'AI 辅助失败，请检查设置后手动重试', {}
 
 
+# The cache contains only server-generated recognition results, keyed by file bytes.
+_preview_cache = OrderedDict()
+_preview_lock = threading.Lock()
+
+def cache_preview(digest, fields, reason):
+    with _preview_lock:
+        _preview_cache[digest] = (time.monotonic(), dict(fields), reason)
+        _preview_cache.move_to_end(digest)
+        while len(_preview_cache) > 500:
+            _preview_cache.popitem(last=False)
+
+def take_preview(digest):
+    with _preview_lock:
+        item = _preview_cache.pop(digest, None)
+    if item and time.monotonic() - item[0] < 3600:
+        return item[1], item[2]
+    return None
+
 def import_file(name, content, source, email_id=None):
     ext = validate(name, content)
     digest = hashlib.sha256(content).hexdigest()
@@ -107,7 +127,8 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
     try:
         tmp.write_bytes(content)
         os.replace(tmp, target)
-        fields, reason = recognize(target)
+        preview = take_preview(digest) if source == '本地上传' else None
+        fields, reason = preview if preview is not None else recognize(target)
         fields, reason, suggestion = assist(target, fields, reason)
         with connect() as db:
             db.execute('BEGIN IMMEDIATE')

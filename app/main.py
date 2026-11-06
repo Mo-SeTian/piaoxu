@@ -102,6 +102,13 @@ class InvoiceUpdate(BaseModel):
 class Ids(BaseModel):
     ids: list[int] = Field(min_length=1,max_length=500)
 
+class DeleteItem(BaseModel):
+    id: int
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+class DeleteInvoices(BaseModel):
+    items: list[DeleteItem] = Field(min_length=1, max_length=500)
+
 class ExportIds(Ids):
     pdf_only: bool = False
 
@@ -245,9 +252,9 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,g
         return {'items':rows,'total':total,'limit':limit,'offset':offset} if limit is not None else rows
 
 @app.post('/api/invoices/delete')
-def delete_selected_invoices(ids: Ids):
+def delete_selected_invoices(ids: DeleteInvoices):
     try:
-        return delete_invoices(ids.ids)
+        return delete_invoices(ids.items)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
     except OSError:
@@ -264,6 +271,8 @@ def inspect_invoice_file(name, content):
         path = Path(directory) / ('invoice'+ext)
         path.write_bytes(content)
         fields, reason = recognize(path)
+    from .service import cache_preview
+    cache_preview(digest, fields, reason)
     return digest, fields, reason, None
 
 def inspect_thumbnail(name, content):
@@ -373,6 +382,16 @@ def update_invoice(invoice_id: int, value: InvoiceUpdate):
         if duplicate_state=='unverified': reason = (reason + '；' if reason else '') + UNVERIFIED_REASON
         db.execute('UPDATE invoices SET buyer=?,seller=?,amount_cents=?,invoice_date=?,invoice_number=?,export_name=?,recognition_status=?,failure_reason=?,duplicate_of=?,duplicate_state=? WHERE id=?', (value.buyer.strip(),value.seller.strip(),value.amount_cents,value.invoice_date.isoformat() if value.invoice_date else '',value.invoice_number.strip(),value.export_name.strip(),'识别失败' if reason else '已识别',reason,duplicate['id'] if duplicate else None,duplicate_state,invoice_id))
         refresh_email_status(db, invoice_id)
+        if row['invoice_number'] != value.invoice_number.strip():
+            affected = db.execute('SELECT * FROM invoices WHERE duplicate_of=?', (invoice_id,)).fetchall()
+            for other in affected:
+                match = duplicate_invoice(db, other['invoice_number'], other['id'])
+                parts = [part for part in other['failure_reason'].split('；') if part and part != DUPLICATE_REASON]
+                if match: parts.append(DUPLICATE_REASON)
+                reason = '；'.join(parts)
+                db.execute('UPDATE invoices SET duplicate_of=?,duplicate_state=?,failure_reason=?,recognition_status=? WHERE id=?',
+                           (match['id'] if match else None, 'pending' if match else '', reason, '识别失败' if reason else '已识别', other['id']))
+                refresh_email_status(db, other['id'])
     return {'ok':True}
 
 @app.patch('/api/invoices/{invoice_id}/duplicate')

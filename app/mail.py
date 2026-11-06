@@ -82,8 +82,11 @@ class PlainText(HTMLParser):
 
 def text_part(part):
     payload = part.get_payload(decode=True) or b''
-    try: return payload.decode(part.get_content_charset() or 'utf-8', errors='replace')
-    except LookupError: return payload.decode('utf-8', errors='replace')
+    for encoding in (part.get_content_charset(), 'utf-8', 'gb18030'):
+        if not encoding: continue
+        try: return payload.decode(encoding)
+        except (LookupError, UnicodeDecodeError): continue
+    return payload.decode('utf-8', errors='replace')
 
 def unpack_attachments(content):
     if len(content)>30*1024*1024: raise ValueError('附件过大')
@@ -142,7 +145,7 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
     invoice_hint=force or bool(re.search(r'发票|票据|invoice',subject+'\n'+body_text+'\n'+html_text,re.I))
     attachments.extend((name,content) for name,content in image_attachments if invoice_hint or re.search(r'发票|票据|invoice',name,re.I))
     rich_html=prepare_html(message,html)
-    links=candidates(subject+'\n'+body_text, '\n'.join(html)) if force or '发票' in (subject+body_text+html_text) else []
+    links=candidates(subject+'\n'+body_text, '\n'.join(html)) if invoice_hint else []
     with connect() as db:
         if old: email_id=old[0]
         else:

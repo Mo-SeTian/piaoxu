@@ -290,6 +290,30 @@ def restore_backup(source):
         try:
             fd=os.open(recovery_file,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
             with os.fdopen(fd,'w+b') as backup: create_backup(backup);backup.flush();os.fsync(backup.fileno())
+        except ValueError:
+            recovery_file.unlink(missing_ok=True)
+            # Preserve damaged storage as-is when a valid application backup cannot be made.
+            recovery_file = recovery_file.with_name(recovery_file.stem + '-raw.zip')
+            try:
+                fd = os.open(recovery_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, 'w+b') as output:
+                    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+                        for prefix, root in _roots():
+                            for child in sorted(root.iterdir()):
+                                if child.name in RESERVED: continue
+                                if CONFIG == DATA and ((prefix == 'config' and child.name == FILES.name) or (prefix == 'data' and child.name != FILES.name)): continue
+                                if child.is_symlink(): raise ValueError('存储目录包含符号链接，无法安全保留')
+                                paths = [child] + (sorted(child.rglob('*')) if child.is_dir() else [])
+                                for path in paths:
+                                    if path.is_symlink(): raise ValueError('存储目录包含符号链接，无法安全保留')
+                                    if not path.is_file() and not path.is_dir(): raise ValueError('存储目录包含不支持的文件类型')
+                                    name = prefix + '/' + path.relative_to(root).as_posix() + ('/' if path.is_dir() else '')
+                                    _write_entry(archive, name, path, path.is_dir())
+                    output.flush(); os.fsync(output.fileno())
+                result['recovery_incomplete'] = True
+            except Exception:
+                recovery_file.unlink(missing_ok=True)
+                raise
         except Exception:
             recovery_file.unlink(missing_ok=True)
             raise

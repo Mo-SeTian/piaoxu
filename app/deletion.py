@@ -23,16 +23,21 @@ def recover_deletions():
                 staged.unlink()
 
 
-def delete_invoices(ids):
-    ids = sorted(set(ids))
+def delete_invoices(items):
+    expected = {item.id: item.sha256 for item in items}
+    if len(expected) != len(items):
+        raise ValueError('发票列表重复，请刷新后重试')
+    ids = sorted(expected)
     marks = ','.join('?' for _ in ids)
     staged = []
     try:
         with connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            rows = db.execute(f'SELECT id,stored_name FROM invoices WHERE id IN ({marks})', ids).fetchall()
+            rows = db.execute(f'SELECT id,stored_name,sha256 FROM invoices WHERE id IN ({marks})', ids).fetchall()
             if len(rows) != len(ids):
                 raise ValueError('部分发票不存在，请刷新后重试')
+            if any(row['sha256'] != expected[row['id']] for row in rows):
+                raise ValueError('发票已发生变化，请刷新后重试')
             affected = [row for row in db.execute(f'SELECT * FROM invoices WHERE duplicate_of IN ({marks})', ids) if row['id'] not in ids]
             email_ids = {row['email_id'] for row in db.execute(f'SELECT DISTINCT email_id FROM invoice_emails WHERE invoice_id IN ({marks})', ids)}
             for row in affected:

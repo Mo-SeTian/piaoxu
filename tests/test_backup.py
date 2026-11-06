@@ -7,6 +7,15 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+def delete_payload(ids):
+    from app.db import connect
+    with connect() as db:
+        items = []
+        for ident in ids:
+            row = db.execute('SELECT sha256 FROM invoices WHERE id=?', (ident,)).fetchone()
+            items.append({'id':ident, 'sha256':row['sha256'] if row else '0'*64})
+    return {'items':items}
+
 @pytest.fixture
 def isolated_storage(tmp_path,monkeypatch):
     import app.backup as backup
@@ -117,7 +126,7 @@ def test_delete_invoice_updates_group_duplicate_and_email(isolated_storage):
         assert conn.execute('SELECT duplicate_of FROM invoices WHERE id=?',(duplicate_id,)).fetchone()['duplicate_of']==invoice_id
     group=client.post('/api/groups',json={'name':'测试报销组','ids':[invoice_id]}).json()['id']
     assert client.patch(f'/api/groups/{group}',json={'reimbursed':True}).status_code==200
-    assert client.post('/api/invoices/delete',json={'ids':[invoice_id]}).json()=={'deleted':1,'cleanup_pending':0}
+    assert client.post('/api/invoices/delete',json=delete_payload([invoice_id])).json()=={'deleted':1,'cleanup_pending':0}
     assert not (data/'files'/name).exists()
     assert client.get(f'/api/invoices/{invoice_id}/original').status_code==404
     assert client.get('/api/groups').json()[0]['invoices']==[]
@@ -133,14 +142,14 @@ def test_delete_missing_invoice_and_storage_failure_are_atomic(isolated_storage,
     ids=[client.post('/api/invoices/upload',files=[('files',(f'{n}.xml',invoice_xml(str(n)*20),'application/xml'))]).json()[0]['id'] for n in (1,2)]
     with db.connect() as conn:
         paths=[data/'files'/conn.execute('SELECT stored_name FROM invoices WHERE id=?',(ident,)).fetchone()['stored_name'] for ident in ids]
-    assert client.post('/api/invoices/delete',json={'ids':[ids[0],9999999]}).status_code==409
+    assert client.post('/api/invoices/delete',json=delete_payload([ids[0],9999999])).status_code==409
     assert all(path.exists() for path in paths)
     real_replace=deletion.os.replace
     def fail_second(src,dst):
         if str(src)==str(paths[1]): raise PermissionError('simulated')
         return real_replace(src,dst)
     monkeypatch.setattr(deletion.os,'replace',fail_second)
-    assert client.post('/api/invoices/delete',json={'ids':ids}).status_code==500
+    assert client.post('/api/invoices/delete',json=delete_payload(ids)).status_code==500
     assert len(client.get('/api/invoices').json())==2 and all(path.exists() for path in paths)
     assert not list((data/'files').glob(deletion.PREFIX+'*'))
 
@@ -151,7 +160,7 @@ def test_batch_delete_repairs_multiple_duplicate_references(isolated_storage):
     base=service.import_file('base.xml',original,'本地上传')[0]
     first=service.import_file('one.xml',original.replace(b'</Invoice>',b'<Extra>one</Extra></Invoice>'),'邮件')[0]
     second=service.import_file('two.xml',original.replace(b'</Invoice>',b'<Extra>two</Extra></Invoice>'),'邮件')[0]
-    result=client.post('/api/invoices/delete',json={'ids':[base,first]})
+    result=client.post('/api/invoices/delete',json=delete_payload([base,first]))
     assert result.status_code==200 and result.json()['deleted']==2
     rows=client.get('/api/invoices').json()
     assert len(rows)==1 and rows[0]['id']==second
@@ -165,7 +174,7 @@ def test_deleting_last_mailed_invoice_keeps_email(isolated_storage):
     with db.connect() as conn:
         email_id=conn.execute('INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,received_at,body,status) VALUES(?,?,?,?,?,?,?,?)',(account,'test','1','','测试邮件','','','已识别')).lastrowid
     ident=service.import_file('mail.xml',invoice_xml('78123456789012345678'),'邮件',email_id)[0]
-    assert client.post('/api/invoices/delete',json={'ids':[ident]}).status_code==200
+    assert client.post('/api/invoices/delete',json=delete_payload([ident])).status_code==200
     message=client.get(f'/api/emails/{email_id}').json()
     assert message['status']=='发票已删除' and message['invoices']==[]
 
@@ -206,7 +215,7 @@ def test_reprocess_one_email_restores_deleted_invoice_without_duplicates(isolate
     assert (invoice_mail['invoice_count'],invoice_mail['recognized_count'],invoice_mail['failed_count'])==(1,1,0)
     email_id=invoice_mail['id']
     ident=client.get(f'/api/emails/{email_id}').json()['invoices'][0]['id']
-    assert client.post('/api/invoices/delete',json={'ids':[ident]}).status_code==200
+    assert client.post('/api/invoices/delete',json=delete_payload([ident])).status_code==200
     deleted=next(item for item in client.get('/api/emails').json() if item['id']==email_id)
     assert deleted['invoice_count']==0 and deleted['status']=='发票已删除'
     assert client.patch(f'/api/accounts/{account}',json={'enabled':False}).status_code==200
@@ -297,11 +306,12 @@ def test_manual_reprocess_checks_direct_links_and_unlabelled_images(isolated_sto
     monkeypatch.setattr(service,'recognize',recognize)
     account=client.post('/api/accounts',json={'name':'测试邮箱','email':'retry-link@qq.com','auth_code':'fake'}).json()['id']
     assert mail.sync_account(account)==2
-    assert not client.get('/api/invoices').json()
+    assert len(client.get('/api/invoices').json()) == 1
     emails=client.get('/api/emails',params={'account_id':account}).json()
     for message in emails:
         response=client.post(f"/api/emails/{message['id']}/reprocess")
-        assert response.status_code==200 and response.json()['created']==1
+        assert response.status_code==200
+        assert response.json()['created'] == (1 if message['invoice_count'] == 0 else 0)
     assert len(client.get('/api/invoices').json())==2
 
 
@@ -725,3 +735,75 @@ def test_later_pdf_pages_are_considered_for_text_and_ocr(monkeypatch):
     fields,reason=recognition._recognize_images(images)
     assert fields==expected and 'OCR' in reason and count[0]>=4
     document.close()
+
+
+def test_stale_delete_identity_cannot_remove_reused_id(isolated_storage, monkeypatch):
+    config,data,client,db,service,backup=isolated_storage
+    first=client.post('/api/invoices/upload',files={'files':('a.xml',invoice_xml('111'),'application/xml')}).json()[0]['id']
+    stale=delete_payload([first])
+    assert client.post('/api/invoices/delete',json=stale).status_code == 200
+    second=client.post('/api/invoices/upload',files={'files':('b.xml',invoice_xml('222'),'application/xml')}).json()[0]['id']
+    assert first == second
+    assert client.post('/api/invoices/delete',json=stale).status_code == 409
+    assert client.get(f'/api/invoices/{second}/original').status_code == 200
+
+
+def test_restore_valid_backup_when_current_original_missing(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    ident=client.post('/api/invoices/upload',files={'files':('a.xml',invoice_xml('111'),'application/xml')}).json()[0]['id']
+    snapshot=client.get('/api/backup/export').content
+    with db.connect() as conn:
+        name=conn.execute('SELECT stored_name FROM invoices WHERE id=?',(ident,)).fetchone()['stored_name']
+    (data/'files'/name).unlink()
+    response=client.post('/api/backup/restore',files={'file':('backup.zip',snapshot,'application/zip')})
+    assert response.status_code == 200 and response.json()['recovery_incomplete']
+    assert (data/'files'/name).is_file()
+    assert list((config/'.piaoxu-recovery').glob('*-raw.zip'))
+
+
+def test_edit_invoice_number_rechecks_linked_duplicates(isolated_storage,monkeypatch):
+    config,data,client,db,service,backup=isolated_storage
+    fields={'buyer':'A','seller':'B','amount_cents':100,'invoice_date':'2026-01-01','invoice_number':'101'}
+    monkeypatch.setattr(service,'recognize',lambda p:(fields.copy(),''))
+    ids=[client.post('/api/invoices/upload',files={'files':(name+'.pdf',b'%PDF-1.7\n'+name.encode()+b'\n%%EOF','application/pdf')}).json()[0]['id'] for name in ('a','b')]
+    assert client.patch(f'/api/invoices/{ids[1]}/duplicate',json={'decision':'confirm'}).status_code==200
+    assert client.patch(f'/api/invoices/{ids[0]}',json={**fields,'invoice_number':'202'}).status_code==200
+    with db.connect() as conn:
+        row=conn.execute('SELECT duplicate_of,duplicate_state FROM invoices WHERE id=?',(ids[1],)).fetchone()
+    assert row['duplicate_of'] is None and row['duplicate_state']==''
+
+
+def test_unlabelled_gb18030_mail_body():
+    from email.message import EmailMessage
+    from app.mail import text_part
+    part=EmailMessage();part.set_type('text/plain');part.set_payload('电子发票'.encode('gb18030'))
+    assert text_part(part)=='电子发票'
+
+
+def test_preview_recognition_is_reused_but_duplicates_rechecked(isolated_storage,monkeypatch):
+    config,data,client,db,service,backup=isolated_storage
+    import app.main as main
+    calls=[]
+    def recognize(path):
+        calls.append(1)
+        return {'buyer':'A','seller':'B','amount_cents':100,'invoice_date':'2026-01-01','invoice_number':'101'},''
+    monkeypatch.setattr(main,'recognize',recognize)
+    monkeypatch.setattr(service,'recognize',recognize)
+    content=b'%PDF-1.7\npreview-cache\n%%EOF'
+    assert client.post('/api/invoices/inspect',files={'files':('a.pdf',content,'application/pdf')}).status_code==200
+    assert client.post('/api/invoices/upload',files={'files':('a.pdf',content,'application/pdf')}).json()[0]['created']
+    assert len(calls)==1
+
+
+def test_english_invoice_subject_enables_direct_link(isolated_storage, monkeypatch):
+    from email.message import EmailMessage
+    import app.mail as mail
+    config,data,client,db,service,backup=isolated_storage
+    message=EmailMessage();message['Subject']='Your invoice';message.set_content('Download: https://example.test/doc.pdf')
+    class Mail:
+        def uid(self,*args): return 'OK',[(None,message.as_bytes())]
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+    monkeypatch.setattr(mail,'download',lambda url:('invoice.xml',invoice_xml('12345678901234567890')))
+    result=mail.process_message(Mail(),account,'1','test','INBOX')
+    assert result['links_found']==1 and len(result['created_ids'])==1
