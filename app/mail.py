@@ -3,7 +3,7 @@ import email
 import imaplib
 import io
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import threading
 from html.parser import HTMLParser
@@ -107,6 +107,30 @@ def unpack_attachments(content):
     except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
         raise ValueError('无法读取压缩附件') from exc
 
+def merge_existing_formats(email_id):
+    """Consolidate untouched duplicate candidates when reprocessing this email."""
+    merged = {}
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        candidates = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
+            WHERE ie.email_id=? AND i.duplicate_state='pending' AND i.failure_reason=?
+            AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name='' AND i.ai_suggestion='{}'
+            AND NOT EXISTS (SELECT 1 FROM group_invoices g WHERE g.invoice_id=i.id)
+            AND NOT EXISTS (SELECT 1 FROM invoice_originals o WHERE o.invoice_id=i.id)""", (email_id, '发票号码与已有发票相同，请核对是否重复')).fetchall()
+        for candidate in candidates:
+            target = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
+                WHERE i.id=? AND ie.email_id=? AND i.recognition_status='已识别' AND i.duplicate_state=''""",(candidate['duplicate_of'],email_id)).fetchone()
+            keys = ('invoice_number','buyer','seller','amount_cents','invoice_date')
+            if not target or any(candidate[k] in (None,'') or candidate[k]!=target[k] for k in keys): continue
+            if Path(candidate['stored_name']).suffix.lower() == Path(target['stored_name']).suffix.lower(): continue
+            if db.execute('SELECT 1 FROM invoices WHERE duplicate_of=?',(candidate['id'],)).fetchone(): continue
+            db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
+                       (target['id'],candidate['sha256'],candidate['original_name'],candidate['stored_name']))
+            db.execute('INSERT OR IGNORE INTO invoice_emails(invoice_id,email_id) SELECT ?,email_id FROM invoice_emails WHERE invoice_id=?',(target['id'],candidate['id']))
+            db.execute('DELETE FROM invoices WHERE id=?',(candidate['id'],))
+            merged[candidate['id']] = target['id']
+    return merged
+
 def process_message(mail, account_id, uid, namespace, folder, old=None, force=False):
     uid_bytes=uid.encode()
     status, payload=mail.uid('fetch',uid_bytes,'(BODY.PEEK[])')
@@ -158,12 +182,17 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
     for link in links:
         try: attachments.append(download(link))
         except Exception: errors.append('链接下载失败')
+    attachments.sort(key=lambda item: 0 if item[0].lower().endswith('.pdf') else 1)
     for name,content in attachments:
         try:
             ident, created=import_file(name,content,'邮件',email_id)
             if created: created_ids.add(ident)
             elif ident not in created_ids: existing_ids.add(ident)
         except Exception: errors.append('附件导入失败')
+    if force:
+        merged = merge_existing_formats(email_id)
+        created_ids = {merged.get(ident,ident) for ident in created_ids}
+        existing_ids = {merged.get(ident,ident) for ident in existing_ids} - created_ids
     with connect() as db:
         statuses=db.execute('SELECT i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id WHERE ie.email_id=?',(email_id,)).fetchall()
         needs_review=any(r['recognition_status']=='识别失败' and r['duplicate_state']!='confirmed' for r in statuses)

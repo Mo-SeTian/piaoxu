@@ -135,7 +135,8 @@ def _check_database(config_dir, data_dir, manifest_by_path):
                 for row in accounts: cipher.decrypt(row['secret'].encode())
                 if secret: cipher.decrypt(secret.encode())
             invoices=db.execute('SELECT sha256,stored_name FROM invoices').fetchall()
-            for row in invoices:
+            originals = db.execute('SELECT sha256,stored_name FROM invoice_originals').fetchall() if 'invoice_originals' in tables else []
+            for row in [*invoices, *originals]:
                 name=row['stored_name'];digest=row['sha256']
                 if not re.fullmatch(r'[0-9a-f]{64}\.(?:pdf|ofd|xml|jpg|jpeg|png)',name) or name.split('.')[0]!=digest:
                     raise ValueError('备份中的发票文件名无效')

@@ -15,7 +15,7 @@ def recover_deletions():
             if not STORED_NAME.fullmatch(name):
                 continue
             original = FILES / name
-            if db.execute('SELECT 1 FROM invoices WHERE stored_name=?', (name,)).fetchone():
+            if db.execute('SELECT 1 FROM invoices WHERE stored_name=? UNION ALL SELECT 1 FROM invoice_originals WHERE stored_name=?', (name,name)).fetchone():
                 if original.exists():
                     raise RuntimeError('待恢复的发票原件与现有文件冲突')
                 os.replace(staged, original)
@@ -42,7 +42,8 @@ def delete_invoices(items):
             email_ids = {row['email_id'] for row in db.execute(f'SELECT DISTINCT email_id FROM invoice_emails WHERE invoice_id IN ({marks})', ids)}
             for row in affected:
                 email_ids.update(item['email_id'] for item in db.execute('SELECT email_id FROM invoice_emails WHERE invoice_id=?', (row['id'],)))
-            for row in rows:
+            originals = db.execute(f'SELECT stored_name FROM invoice_originals WHERE invoice_id IN ({marks})', ids).fetchall()
+            for row in [*rows, *originals]:
                 name = row['stored_name']
                 if not STORED_NAME.fullmatch(name):
                     raise ValueError('发票原件路径无效，无法删除')

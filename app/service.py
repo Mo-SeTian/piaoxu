@@ -113,7 +113,7 @@ def duplicate_reason(reason):
 
 def _import_file_locked(name, content, source, email_id, ext, digest):
     with connect() as db:
-        found = db.execute('SELECT id FROM invoices WHERE sha256=?', (digest,)).fetchone()
+        found = db.execute('SELECT id FROM invoices WHERE sha256=? UNION ALL SELECT invoice_id AS id FROM invoice_originals WHERE sha256=?', (digest,digest)).fetchone()
         if found:
             if email_id is not None:
                 db.execute('INSERT OR IGNORE INTO invoice_emails(invoice_id,email_id) VALUES(?,?)', (found['id'], email_id))
@@ -133,6 +133,15 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
         with connect() as db:
             db.execute('BEGIN IMMEDIATE')
             number = fields.get('invoice_number') or ''
+            # Merge only different formats from this exact email when all key fields agree.
+            if email_id is not None and not reason and all(fields.get(k) not in (None, '') for k in ('invoice_number','buyer','seller','amount_cents','invoice_date')):
+                matches = db.execute('''SELECT i.* FROM invoices i JOIN invoice_emails e ON e.invoice_id=i.id
+                    WHERE e.email_id=? AND i.invoice_number=? AND i.recognition_status='已识别' AND i.duplicate_state='' ''', (email_id,number)).fetchall()
+                matches = [row for row in matches if Path(row['stored_name']).suffix.lower() != ext and all(row[k] == fields[k] for k in ('buyer','seller','amount_cents','invoice_date'))]
+                if len(matches) == 1:
+                    db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
+                               (matches[0]['id'],digest,Path(name).name[:255],stored))
+                    return matches[0]['id'], False
             duplicate = duplicate_invoice(db,number)
             if duplicate: reason = duplicate_reason(reason)
             unverified = not number
@@ -149,7 +158,7 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
         tmp.unlink(missing_ok=True)
         try:
             with connect() as db:
-                exists=db.execute('SELECT 1 FROM invoices WHERE sha256=?',(digest,)).fetchone()
+                exists=db.execute('SELECT 1 FROM invoices WHERE sha256=? UNION ALL SELECT 1 FROM invoice_originals WHERE sha256=?',(digest,digest)).fetchone()
             if not exists: target.unlink(missing_ok=True)
         except Exception:
             pass

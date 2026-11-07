@@ -807,3 +807,77 @@ def test_english_invoice_subject_enables_direct_link(isolated_storage, monkeypat
     monkeypatch.setattr(mail,'download',lambda url:('invoice.xml',invoice_xml('12345678901234567890')))
     result=mail.process_message(Mail(),account,'1','test','INBOX')
     assert result['links_found']==1 and len(result['created_ids'])==1
+
+
+def test_mail_multiple_formats_preserve_originals_and_backup(isolated_storage, monkeypatch):
+    from email.message import EmailMessage
+    import app.mail as mail
+    config,data,client,db,service,backup=isolated_storage
+    fields={'buyer':'购买方','seller':'销售方','amount_cents':12345,'invoice_date':'2026-10-15','invoice_number':'12345678901234567890'}
+    monkeypatch.setattr(service,'recognize',lambda path:(fields.copy(),''))
+    pdf=b'%PDF-1.7\nexample\n%%EOF';xml=invoice_xml(fields['invoice_number'])
+    ofd_buffer=io.BytesIO()
+    with zipfile.ZipFile(ofd_buffer,'w') as z: z.writestr('OFD.xml','<OFD/>')
+    ofd=ofd_buffer.getvalue()
+    message=EmailMessage();message['Subject']='电子发票';message.set_content('附件')
+    for name,body,kind in [('invoice.xml',xml,'xml'),('invoice.ofd',ofd,'octet-stream'),('invoice.pdf',pdf,'pdf')]:
+        message.add_attachment(body,maintype='application',subtype=kind,filename=name)
+    class Mail:
+        def uid(self,*args): return 'OK',[(None,message.as_bytes())]
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+    result=mail.process_message(Mail(),account,'1','valid','INBOX')
+    assert result['status']=='已识别' and len(result['created_ids'])==1
+    rows=client.get('/api/invoices').json();assert len(rows)==1
+    invoice=rows[0];assert invoice['original_name']=='invoice.pdf' and len(invoice['other_originals'])==2
+    for item in invoice['other_originals']:
+        content=client.get(f"/api/invoices/{invoice['id']}/originals/{item['id']}").content
+        assert content=={'invoice.xml':xml,'invoice.ofd':ofd}[item['name']]
+    for pdf_only,expected in [(False,{pdf,xml,ofd}),(True,{pdf})]:
+        response=client.post('/api/invoices/export',json={'ids':[invoice['id']],'pdf_only':pdf_only})
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z: assert {z.read(name) for name in z.namelist()}==expected
+    replay=mail.process_message(Mail(),account,'1','valid','INBOX',(result['email_id'],'已识别'),force=True)
+    assert not replay['created_ids'] and replay['status']=='已识别'
+    # Backup validates and includes every original; deleting the invoice removes them all.
+    with db.connect() as conn: conn.execute('DELETE FROM accounts WHERE id=?',(account,))
+    snapshot=io.BytesIO();backup.create_backup(snapshot)
+    with zipfile.ZipFile(snapshot) as z:
+        assert all(any(z.read(name)==body for name in z.namelist() if name.startswith('data/files/') and not name.endswith('/')) for body in (pdf,xml,ofd))
+    assert client.post('/api/invoices/delete',json=delete_payload([invoice['id']])).status_code==200
+    assert not list((data/'files').iterdir())
+
+
+def test_different_invoice_details_do_not_merge_mail_attachments(isolated_storage,monkeypatch):
+    config,data,client,db,service,backup=isolated_storage
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+        email_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject) VALUES(?,?,?,?,?)",(account,'test','1','','发票')).lastrowid
+    def recognize(path):
+        return {'buyer':'购买方','seller':'销售方','amount_cents':100 if path.suffix=='.pdf' else 200,'invoice_date':'2026-10-15','invoice_number':'12345678901234567890'},''
+    monkeypatch.setattr(service,'recognize',recognize)
+    first=service.import_file('a.pdf',b'%PDF-1.7\na\n%%EOF','邮件',email_id)[0]
+    second=service.import_file('a.xml',invoice_xml('12345678901234567890'),'邮件',email_id)[0]
+    assert first!=second
+    with db.connect() as conn:
+        assert conn.execute('SELECT duplicate_state FROM invoices WHERE id=?',(second,)).fetchone()[0]=='pending'
+        assert conn.execute('SELECT count(*) FROM invoice_originals').fetchone()[0]==0
+
+
+def test_reprocess_merges_only_untouched_historical_formats(isolated_storage,monkeypatch):
+    import app.mail as mail
+    config,data,client,db,service,backup=isolated_storage
+    fields={'buyer':'购买方','seller':'销售方','amount_cents':123,'invoice_date':'2026-10-15','invoice_number':'12345678901234567890'}
+    monkeypatch.setattr(service,'recognize',lambda path:(fields.copy(),''))
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+        mail_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject) VALUES(?,?,?,?,?)",(account,'test','1','','发票')).lastrowid
+    pdf=b'%PDF-1.7\na\n%%EOF';xml=invoice_xml(fields['invoice_number'])
+    first=service.import_file('a.pdf',pdf,'邮件')[0]
+    second=service.import_file('a.xml',xml,'邮件')[0]
+    with db.connect() as conn:
+        conn.executemany('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',[(first,mail_id),(second,mail_id)])
+    assert mail.merge_existing_formats(mail_id)=={second:first}
+    with db.connect() as conn:
+        assert conn.execute('SELECT count(*) FROM invoices').fetchone()[0]==1
+        assert conn.execute('SELECT invoice_id FROM invoice_originals').fetchone()[0]==first
+    assert client.post('/api/invoices/inspect',files={'files':('a.xml',xml,'application/xml')}).json()[0]['duplicate']=='existing_file'

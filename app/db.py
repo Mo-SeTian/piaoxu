@@ -34,6 +34,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS email_attachments(id INTEGER PRIMARY KEY, email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE, name TEXT NOT NULL, content_type TEXT NOT NULL, size INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS email_sync_failures(account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, uidvalidity TEXT NOT NULL, uid TEXT NOT NULL, PRIMARY KEY(account_id,uidvalidity,uid));
         CREATE TABLE IF NOT EXISTS invoice_emails(invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE, PRIMARY KEY(invoice_id,email_id));
+        CREATE TABLE IF NOT EXISTS invoice_originals(id INTEGER PRIMARY KEY,invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,sha256 TEXT NOT NULL UNIQUE,original_name TEXT NOT NULL,stored_name TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS invoice_originals_invoice ON invoice_originals(invoice_id);
         CREATE INDEX IF NOT EXISTS invoice_emails_by_email ON invoice_emails(email_id,invoice_id);
         CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, reimbursed INTEGER NOT NULL DEFAULT 0, reimbursed_at TEXT);
         CREATE TABLE IF NOT EXISTS group_invoices(group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE, invoice_id INTEGER NOT NULL UNIQUE REFERENCES invoices(id), PRIMARY KEY(group_id, invoice_id));

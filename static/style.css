@@ -169,6 +169,7 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .preview-fields{display:grid;grid-template-columns:70px minmax(0,1fr);gap:15px 12px;align-items:baseline;margin:24px 0;color:var(--ink);font-size:12px;line-height:1.6}
 .preview-fields dt{color:var(--muted);font-weight:400}.preview-fields dd{margin:0;min-width:0;overflow-wrap:anywhere}.preview-fields dd strong{font-size:16px;font-weight:400;font-variant-numeric:tabular-nums}
 .source-entry{display:grid;justify-items:start;min-width:0}.source-entry+.source-entry{margin-top:7px}.source-entry span{min-width:0;overflow-wrap:anywhere}.source-entry .source-email{align-items:start;justify-content:start;padding:0;font-size:11px;line-height:inherit;min-height:24px}
+.preview-originals{display:flex;flex-wrap:wrap;gap:6px 10px;margin:12px 0;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.preview-originals a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;max-width:100%}
 .preview-actions{display:flex;flex-wrap:wrap;gap:8px}.preview-actions .button{font-size:12px;min-height:38px;padding:8px 14px}.preview-link{display:flex;flex:1;min-width:0}
 .dialog-preview .preview-head{margin-top:0}
 .pdf-pager{display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 0 0;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}

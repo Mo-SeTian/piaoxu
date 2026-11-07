@@ -242,7 +242,10 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,g
         sql='SELECT i.*,g.name group_name,a.name account_name '+base+where+' ORDER BY i.imported_at DESC,i.id DESC'
         rows = [dict(r) for r in db.execute(sql+(' LIMIT ? OFFSET ?' if limit is not None else ''),(*args,limit,offset) if limit is not None else args)]
         by_id = {row['id']:row for row in rows}
-        for row in rows: row['mail_sources'] = []
+        for row in rows: row['mail_sources'] = []; row['other_originals'] = []
+        for item in db.execute('SELECT id,invoice_id,original_name FROM invoice_originals ORDER BY id'):
+            if item['invoice_id'] in by_id:
+                by_id[item['invoice_id']]['other_originals'].append({'id':item['id'],'name':item['original_name']})
         source_sql='''SELECT ie.invoice_id,e.id email_id,a.id account_id,a.name account_name,a.email account_email FROM invoice_emails ie JOIN emails e ON e.id=ie.email_id JOIN accounts a ON a.id=e.account_id'''
         if limit is not None and not by_id: return {'items':[],'total':total,'limit':limit,'offset':offset}
         if limit is not None: source_sql+=' WHERE ie.invoice_id IN ('+','.join('?'*len(by_id))+')'
@@ -264,7 +267,7 @@ def inspect_invoice_file(name, content):
     ext = validate(name, content)
     digest = hashlib.sha256(content).hexdigest()
     with connect() as db:
-        existing = db.execute('SELECT id,original_name,buyer,seller,amount_cents,invoice_date,invoice_number,recognition_status,failure_reason FROM invoices WHERE sha256=?',(digest,)).fetchone()
+        existing = db.execute('''SELECT id,original_name,buyer,seller,amount_cents,invoice_date,invoice_number,recognition_status,failure_reason FROM invoices WHERE sha256=? UNION ALL SELECT i.id,i.original_name,i.buyer,i.seller,i.amount_cents,i.invoice_date,i.invoice_number,i.recognition_status,i.failure_reason FROM invoice_originals o JOIN invoices i ON i.id=o.invoice_id WHERE o.sha256=?''',(digest,digest)).fetchone()
     if existing:
         return digest, dict(existing), existing['failure_reason'], dict(existing)
     with tempfile.TemporaryDirectory(prefix='piaoxu-inspect-') as directory:
@@ -491,6 +494,15 @@ def original(invoice_id: int):
     media = {'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png'}.get(ext,'application/octet-stream')
     return FileResponse(FILES / row['stored_name'], media_type=media,filename=row['original_name'],content_disposition_type='inline' if ext in ('.pdf','.jpg','.jpeg','.png') else 'attachment',headers={'X-Content-Type-Options':'nosniff'})
 
+@app.get('/api/invoices/{invoice_id}/originals/{original_id}')
+def alternate_original(invoice_id: int, original_id: int):
+    with connect() as db:
+        row = db.execute('SELECT stored_name,original_name FROM invoice_originals WHERE invoice_id=? AND id=?',(invoice_id,original_id)).fetchone()
+    if not row or not (FILES / row['stored_name']).is_file(): raise HTTPException(404,'原件不存在')
+    ext = Path(row['stored_name']).suffix.lower()
+    media = {'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png'}.get(ext,'application/octet-stream')
+    return FileResponse(FILES / row['stored_name'],media_type=media,filename=row['original_name'],content_disposition_type='inline' if ext in ('.pdf','.jpg','.jpeg','.png') else 'attachment',headers={'X-Content-Type-Options':'nosniff'})
+
 @app.get('/api/invoices/{invoice_id}/preview')
 def preview_invoice(invoice_id: int, page: int = Query(1, ge=1), info: bool = False):
     with connect() as db:
@@ -549,24 +561,31 @@ def export(ids: ExportIds):
     with connect() as db:
         rows = db.execute('SELECT * FROM invoices WHERE id IN ('+','.join('?'*len(ids.ids))+')',ids.ids).fetchall()
         setting = db.execute("SELECT value FROM settings WHERE key='filename_fields'").fetchone()
+        variants = db.execute('SELECT invoice_id,stored_name FROM invoice_originals WHERE invoice_id IN ('+','.join('?'*len(ids.ids))+')',ids.ids).fetchall()
+    originals = {row['id']:[row['stored_name']] for row in rows}
+    for variant in variants: originals[variant['invoice_id']].append(variant['stored_name'])
     if len(rows)!=len(set(ids.ids)): raise HTTPException(404,'部分发票不存在')
-    if ids.pdf_only and any(Path(row['stored_name']).suffix.lower() != '.pdf' for row in rows):
+    if ids.pdf_only and any(not any(Path(name).suffix.lower()=='.pdf' for name in originals[row['id']]) for row in rows):
         raise HTTPException(422,'所选发票中包含 OFD 或 XML 或图片原件，没有 PDF 原件；请选择原格式导出')
     fields = json.loads(setting['value']) if setting else ['抬头','商户','金额','开票日期']
     output = tempfile.SpooledTemporaryFile(max_size=8*1024*1024)
     with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
         used = set()
         for row in rows:
-            path = FILES / row['stored_name']
-            if not path.is_file(): raise HTTPException(404,'部分原件不存在')
-            name = export_filename(row, fields)
-            ext = Path(row['stored_name']).suffix.lower()
-            stem = name[:-len(ext)]
-            idx = 2
-            while name.casefold() in used:
-                name = f'{stem}_{idx}{ext}'; idx += 1
-            used.add(name.casefold())
-            z.write(path, name)
+            names = originals[row['id']]
+            if ids.pdf_only: names = [name for name in names if Path(name).suffix.lower()=='.pdf']
+            for stored_name in names:
+                path = FILES / stored_name
+                if not path.is_file(): raise HTTPException(404,'部分原件不存在')
+                variant = dict(row); variant['stored_name'] = stored_name
+                name = export_filename(variant, fields)
+                ext = Path(stored_name).suffix.lower()
+                stem = name[:-len(ext)]
+                idx = 2
+                while name.casefold() in used:
+                    name = f'{stem}_{idx}{ext}'; idx += 1
+                used.add(name.casefold())
+                z.write(path, name)
     output.seek(0)
     def stream():
         try:
