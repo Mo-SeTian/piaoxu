@@ -881,3 +881,38 @@ def test_reprocess_merges_only_untouched_historical_formats(isolated_storage,mon
         assert conn.execute('SELECT count(*) FROM invoices').fetchone()[0]==1
         assert conn.execute('SELECT invoice_id FROM invoice_originals').fetchone()[0]==first
     assert client.post('/api/invoices/inspect',files={'files':('a.xml',xml,'application/xml')}).json()[0]['duplicate']=='existing_file'
+
+
+def test_partial_ofd_matches_number_and_amount_without_conflicts(isolated_storage,monkeypatch):
+    config,data,client,db,service,backup=isolated_storage
+    from app.mail import merge_existing_formats
+    fields={'buyer':'购买方','seller':'销售方','amount_cents':12345,'invoice_date':'2026-10-15','invoice_number':'12345678901234567890'}
+    partial={**fields,'buyer':'','seller':''}
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+        email_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject) VALUES(?,?,?,?,?)",(account,'test','1','','发票')).lastrowid
+    ofd=io.BytesIO()
+    with zipfile.ZipFile(ofd,'w') as archive: archive.writestr('OFD.xml','<OFD/>')
+    monkeypatch.setattr(service,'recognize',lambda path:(fields.copy(),''))
+    original=service.import_file('a.pdf',b'%PDF-1.7\na\n%%EOF','邮件',email_id)[0]
+    monkeypatch.setattr(service,'recognize',lambda path:(partial.copy(),'未识别：抬头、销售方'))
+    merged,created=service.import_file('a.ofd',ofd.getvalue(),'邮件',email_id)
+    assert merged==original and not created
+    with db.connect() as conn:
+        assert conn.execute('SELECT count(*) FROM invoice_originals').fetchone()[0]==1
+    # Existing records are reconciled after reprocessing, with the same constraints.
+    second=service.import_file('other.ofd',ofd.getvalue()+b'other','邮件')[0]
+    with db.connect() as conn:
+        conn.execute('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',(second,email_id))
+    assert merge_existing_formats(email_id)=={second:original}
+
+
+def test_partial_original_conflicts_or_uncertainty_do_not_merge():
+    from app.service import matching_mail_original
+    invoice={'stored_name':'example.pdf','buyer':'A','seller':'B','amount_cents':100,'invoice_date':'2026-10-15','invoice_number':'123'}
+    fields={'buyer':'','seller':'B','amount_cents':100,'invoice_date':'2026-10-15','invoice_number':'123'}
+    assert matching_mail_original(invoice,fields,'未识别：抬头','.ofd')
+    assert not matching_mail_original(invoice,{**fields,'amount_cents':101},'未识别：抬头','.ofd')
+    assert not matching_mail_original(invoice,{**fields,'invoice_number':''},'未识别：抬头','.ofd')
+    assert not matching_mail_original(invoice,{**fields,'seller':'C'},'未识别：抬头','.ofd')
+    assert not matching_mail_original(invoice,fields,'扫描件 OCR 结果请人工核对','.ofd')

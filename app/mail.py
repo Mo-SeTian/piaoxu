@@ -12,7 +12,7 @@ from email.utils import parsedate_to_datetime
 from .db import connect
 from .download import candidates, download
 from .email_html import HTML_VERSION, prepare_html
-from .service import cipher, import_file, now
+from .service import DUPLICATE_REASON, cipher, import_file, matching_mail_original, now
 
 locks_guard = threading.Lock()
 account_locks = {}
@@ -113,16 +113,17 @@ def merge_existing_formats(email_id):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         candidates = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
-            WHERE ie.email_id=? AND i.duplicate_state='pending' AND i.failure_reason=?
+            WHERE ie.email_id=? AND i.duplicate_state='pending'
             AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name='' AND i.ai_suggestion='{}'
             AND NOT EXISTS (SELECT 1 FROM group_invoices g WHERE g.invoice_id=i.id)
-            AND NOT EXISTS (SELECT 1 FROM invoice_originals o WHERE o.invoice_id=i.id)""", (email_id, '发票号码与已有发票相同，请核对是否重复')).fetchall()
+            AND NOT EXISTS (SELECT 1 FROM invoice_originals o WHERE o.invoice_id=i.id)""", (email_id,)).fetchall()
         for candidate in candidates:
             target = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
                 WHERE i.id=? AND ie.email_id=? AND i.recognition_status='已识别' AND i.duplicate_state=''""",(candidate['duplicate_of'],email_id)).fetchone()
-            keys = ('invoice_number','buyer','seller','amount_cents','invoice_date')
-            if not target or any(candidate[k] in (None,'') or candidate[k]!=target[k] for k in keys): continue
-            if Path(candidate['stored_name']).suffix.lower() == Path(target['stored_name']).suffix.lower(): continue
+            parts = candidate['failure_reason'].split('；')
+            if DUPLICATE_REASON not in parts: continue
+            reason = '；'.join(part for part in parts if part != DUPLICATE_REASON)
+            if not target or not matching_mail_original(target, dict(candidate), reason, Path(candidate['stored_name']).suffix.lower()): continue
             if db.execute('SELECT 1 FROM invoices WHERE duplicate_of=?',(candidate['id'],)).fetchone(): continue
             db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
                        (target['id'],candidate['sha256'],candidate['original_name'],candidate['stored_name']))

@@ -111,6 +111,21 @@ def duplicate_reason(reason):
     return (reason + '；' if reason else '') + DUPLICATE_REASON
 
 
+def matching_mail_original(invoice, fields, reason, ext):
+    """Require matching invoice number and total, and reject every known conflict."""
+    if ext not in ('.pdf', '.ofd', '.xml') or Path(invoice['stored_name']).suffix.lower() == ext:
+        return False
+    if Path(invoice['stored_name']).suffix.lower() not in ('.pdf', '.ofd', '.xml'):
+        return False
+    if reason and not (reason.startswith('未识别：') and '；' not in reason):
+        return False
+    required = ('invoice_number', 'amount_cents')
+    if any(fields.get(key) in (None, '') or invoice[key] != fields[key] for key in required):
+        return False
+    return all(fields.get(key) in (None, '') or invoice[key] == fields[key]
+               for key in ('buyer', 'seller', 'invoice_date'))
+
+
 def _import_file_locked(name, content, source, email_id, ext, digest):
     with connect() as db:
         found = db.execute('SELECT id FROM invoices WHERE sha256=? UNION ALL SELECT invoice_id AS id FROM invoice_originals WHERE sha256=?', (digest,digest)).fetchone()
@@ -133,11 +148,10 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
         with connect() as db:
             db.execute('BEGIN IMMEDIATE')
             number = fields.get('invoice_number') or ''
-            # Merge only different formats from this exact email when all key fields agree.
-            if email_id is not None and not reason and all(fields.get(k) not in (None, '') for k in ('invoice_number','buyer','seller','amount_cents','invoice_date')):
+            if email_id is not None and number:
                 matches = db.execute('''SELECT i.* FROM invoices i JOIN invoice_emails e ON e.invoice_id=i.id
                     WHERE e.email_id=? AND i.invoice_number=? AND i.recognition_status='已识别' AND i.duplicate_state='' ''', (email_id,number)).fetchall()
-                matches = [row for row in matches if Path(row['stored_name']).suffix.lower() != ext and all(row[k] == fields[k] for k in ('buyer','seller','amount_cents','invoice_date'))]
+                matches = [row for row in matches if matching_mail_original(row, fields, reason, ext)]
                 if len(matches) == 1:
                     db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
                                (matches[0]['id'],digest,Path(name).name[:255],stored))
