@@ -262,8 +262,8 @@ def parse_xml_invoice(root):
     mismatch = False
     if found.get('subtotal') and found.get('tax') and found.get('amount_cents') is not None:
         try:
-            subtotal = Decimal(found['subtotal'].replace(',',''))
-            tax = Decimal(found['tax'].replace(',',''))
+            subtotal = Decimal(found['subtotal'].replace(',','').replace('¥','').replace('￥','').strip())
+            tax = Decimal(found['tax'].replace(',','').replace('¥','').replace('￥','').strip())
             mismatch = (subtotal + tax) * 100 != found['amount_cents']
         except InvalidOperation:
             mismatch = True
@@ -276,16 +276,55 @@ def parse_xml_invoice(root):
     return found, reason
 
 
+def _ofd_objects(roots):
+    """Index page-scoped text objects referenced by semantic invoice tags."""
+    from posixpath import dirname, join, normpath
+    objects = {}
+    for name, root in roots.items():
+        if root.tag.split('}')[-1] != 'Document': continue
+        for page in root.iter():
+            if page.tag.split('}')[-1] != 'Page': continue
+            location = normpath(join(dirname(name), page.get('BaseLoc', '')))
+            content = roots.get(location)
+            if content is None: continue
+            for node in content.iter():
+                if node.tag.split('}')[-1] != 'TextObject': continue
+                key = (dirname(name), page.get('ID'), node.get('ID'))
+                if key in objects:
+                    objects[key] = None
+                else:
+                    objects[key] = ''.join(part.text or '' for part in node.iter() if part.tag.split('}')[-1] == 'TextCode')
+    return objects
+
+
+def _resolve_ofd_tags(root, name, objects):
+    from posixpath import dirname
+    # Tags may live in a subdirectory. Use the nearest owning Document directory.
+    owners = {key[0] for key in objects if not key[0] or name.startswith(key[0] + '/')}
+    if not owners: return
+    owner = max(owners, key=len)
+    for node in root.iter():
+        refs = [child for child in node if child.tag.split('}')[-1] == 'ObjectRef']
+        if not refs or (node.text or '').strip(): continue
+        values = [objects.get((owner, ref.get('PageRef'), (ref.text or '').strip())) for ref in refs]
+        if all(value is not None for value in values):
+            node.text = ''.join(values)
+
+
 def recognize_ofd(path):
     from .formats import open_ofd, read_xml
     try:
         with open_ofd(path.read_bytes()) as archive:
             xml_names = [i.filename for i in archive.infolist() if i.filename.lower().endswith('.xml') and i.filename != 'OFD.xml']
+            roots = {}
+            for name in xml_names:
+                try: roots[name] = read_xml(archive.read(name))
+                except ValueError: continue
+            objects = _ofd_objects(roots)
             text = []
             best = ({}, '未识别 OFD 中的发票字段')
-            for name in xml_names:
-                try: root = read_xml(archive.read(name))
-                except ValueError: continue
+            for name, root in roots.items():
+                _resolve_ofd_tags(root, name, objects)
                 fields, reason = parse_xml_invoice(root)
                 if len([v for v in fields.values() if v not in (None,'')]) > len([v for v in best[0].values() if v not in (None,'')]): best = (fields,reason)
                 for node in root.iter():

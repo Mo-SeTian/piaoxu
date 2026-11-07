@@ -114,7 +114,7 @@ def merge_existing_formats(email_id):
         db.execute('BEGIN IMMEDIATE')
         candidates = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
             WHERE ie.email_id=? AND i.duplicate_state='pending'
-            AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name='' AND i.ai_suggestion='{}'
+            AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name=''
             AND NOT EXISTS (SELECT 1 FROM group_invoices g WHERE g.invoice_id=i.id)
             AND NOT EXISTS (SELECT 1 FROM invoice_originals o WHERE o.invoice_id=i.id)""", (email_id,)).fetchall()
         for candidate in candidates:
@@ -123,7 +123,17 @@ def merge_existing_formats(email_id):
             parts = candidate['failure_reason'].split('；')
             if DUPLICATE_REASON not in parts: continue
             reason = '；'.join(part for part in parts if part != DUPLICATE_REASON)
-            if not target or not matching_mail_original(target, dict(candidate), reason, Path(candidate['stored_name']).suffix.lower()): continue
+            ext = Path(candidate['stored_name']).suffix.lower()
+            fields = dict(candidate)
+            if candidate['ai_suggestion'] != '{}':
+                if ext != '.ofd': continue
+                # An older AI-assisted result must be independently verified from the original.
+                from .recognition import recognize_ofd
+                from .db import FILES
+                fields, reason = recognize_ofd(FILES / candidate['stored_name'])
+                keys = ('invoice_number','buyer','seller','amount_cents','invoice_date')
+                if reason or any(fields.get(key) in (None,'') or fields[key] != candidate[key] for key in keys): continue
+            if not target or not matching_mail_original(target, fields, reason, ext): continue
             if db.execute('SELECT 1 FROM invoices WHERE duplicate_of=?',(candidate['id'],)).fetchone(): continue
             db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
                        (target['id'],candidate['sha256'],candidate['original_name'],candidate['stored_name']))

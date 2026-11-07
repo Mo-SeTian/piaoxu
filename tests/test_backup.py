@@ -916,3 +916,69 @@ def test_partial_original_conflicts_or_uncertainty_do_not_merge():
     assert not matching_mail_original(invoice,{**fields,'invoice_number':''},'未识别：抬头','.ofd')
     assert not matching_mail_original(invoice,{**fields,'seller':'C'},'未识别：抬头','.ofd')
     assert not matching_mail_original(invoice,fields,'扫描件 OCR 结果请人工核对','.ofd')
+
+
+def referenced_ofd(fields, missing_reference=False):
+    """Synthetic OFD with semantic tags pointing to page text objects."""
+    from xml.etree import ElementTree as ET
+    document = ET.Element('Document')
+    pages = ET.SubElement(document,'Pages')
+    ET.SubElement(pages,'Page',ID='61',BaseLoc='Pages/Page_0/Content.xml')
+    page = ET.Element('Page')
+    tags = ET.Element('root')
+    entries = [('InvoiceNo',fields['invoice_number']),('IssueDate',fields['invoice_date']),
+               ('BuyerName',fields['buyer']),('SellerName',fields['seller']),
+               ('TaxExclusiveTotalAmount','100.00'),('TaxTotalAmount','6.00'),
+               ('TaxInclusiveTotalAmount',f"{fields['amount_cents']/100:.2f}")]
+    ident = 1
+    for name,value in entries:
+        tag = ET.SubElement(tags,name)
+        for text in (['¥',value] if name.endswith('Amount') else [value]):
+            obj = ET.SubElement(page,'TextObject',ID=str(ident))
+            ET.SubElement(obj,'TextCode').text = text
+            ref = ET.SubElement(tag,'ObjectRef',PageRef='61')
+            ref.text = '999' if missing_reference and name=='InvoiceNo' else str(ident)
+            ident += 1
+    output = io.BytesIO()
+    with zipfile.ZipFile(output,'w') as archive:
+        archive.writestr('OFD.xml','<OFD/>')
+        archive.writestr('Doc_0/Document.xml',ET.tostring(document))
+        archive.writestr('Doc_0/Pages/Page_0/Content.xml',ET.tostring(page))
+        archive.writestr('Doc_0/Tags/CustomTag.xml',ET.tostring(tags))
+    return output.getvalue()
+
+
+def test_ofd_semantic_references_and_currency_totals(tmp_path):
+    from app.recognition import recognize_ofd
+    fields={'invoice_number':'12345678901234567890','buyer':'测试购买方','seller':'测试销售方','invoice_date':'2026-11-07','amount_cents':10600}
+    path = tmp_path/'invoice.ofd'
+    path.write_bytes(referenced_ofd(fields))
+    result,reason = recognize_ofd(path)
+    assert not reason
+    assert all(result[key]==value for key,value in fields.items())
+    path.write_bytes(referenced_ofd(fields,missing_reference=True))
+    assert recognize_ofd(path)[1]
+    path.write_bytes(referenced_ofd({**fields,'amount_cents':10700}))
+    assert '价税合计与金额、税额不一致' in recognize_ofd(path)[1]
+
+
+def test_old_ai_ofd_is_merged_only_after_native_verification(isolated_storage,monkeypatch):
+    from app.mail import merge_existing_formats
+    config,data,client,db,service,backup=isolated_storage
+    fields={'invoice_number':'12345678901234567890','buyer':'测试购买方','seller':'测试销售方','invoice_date':'2026-11-07','amount_cents':10600}
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+        email_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject) VALUES(?,?,?,?,?)",(account,'test','1','','发票')).lastrowid
+    monkeypatch.setattr(service,'recognize',lambda path:(fields.copy(),''))
+    first=service.import_file('a.pdf',b'%PDF-1.7\na\n%%EOF','邮件',email_id)[0]
+    second=service.import_file('a.ofd',referenced_ofd(fields),'邮件')[0]
+    with db.connect() as conn:
+        conn.execute('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',(second,email_id))
+        conn.execute('UPDATE invoices SET ai_suggestion=?,failure_reason=? WHERE id=?',
+                     (json.dumps(fields),'AI 建议已生成，请人工核对；'+service.DUPLICATE_REASON,second))
+        conn.execute('UPDATE invoices SET amount_cents=10700 WHERE id=?',(second,))
+    assert not merge_existing_formats(email_id)
+    with db.connect() as conn: conn.execute('UPDATE invoices SET amount_cents=10600 WHERE id=?',(second,))
+    assert merge_existing_formats(email_id)=={second:first}
+    rows=client.get('/api/invoices').json()
+    assert len(rows)==1 and len(rows[0]['other_originals'])==1
