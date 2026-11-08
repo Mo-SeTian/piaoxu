@@ -20,6 +20,20 @@ docker compose -f compose.hub.yaml up -d
 
 本地源码开发可继续使用 `docker compose up -d --build`，访问 <http://127.0.0.1:8765/>。
 
+## 消息推送
+
+登录后打开「消息推送 → 添加渠道」，可同时启用多个渠道。保存后点击「发送测试」，并到接收端确认收到了测试消息。
+
+| 平台 | 配置项 |
+| --- | --- |
+| [WxPusher](https://wxpusher.zjiecode.com/docs/api-reference.html) | 应用 AppToken，以及接收 UID 或主题 ID |
+| [企业微信应用](https://developer.work.weixin.qq.com/document/path/90236) | 企业 ID、自建应用 AgentId 和 Secret、应用可见范围内的成员 UserID |
+| [Server酱](https://sct.ftqq.com/docs/getting-started/sendkey/) | Turbo 或 Server酱³ 的 SendKey |
+
+邮箱同步自动识别到新票或遇到识别、附件处理失败时，会按邮件和结果发送汇总通知。手动导入和手动重新识别不会触发自动通知。发送结果显示在渠道列表中。推送凭证加密保存并随备份恢复，消息不包含票号、金额、原件和邮件正文。
+
+## 镜像构建
+
 GitHub Actions 会在提交到 `main` 后先运行测试，再推送多架构 `latest` 和 `sha-提交号` 镜像；推送 `v*` Git 标签时生成同名镜像标签。也可从 Actions 页面手动运行。工作流使用仓库密钥 `DOCKER_HUB_USERNAME` 和 `DOCKER_HUB_TOKEN`，密钥值无需写入代码。
 
 发票识别结果需要人工核对，本项目不提供发票真伪查验。

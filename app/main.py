@@ -16,6 +16,8 @@ import sqlite3
 import threading
 import fitz
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -33,6 +35,7 @@ from .storage_lock import storage_lock, storage_lock_sync
 from .config import ensure_config, mail_sync_interval
 from . import auth
 from .deletion import delete_invoices, recover_deletions
+from . import notifications
 
 with storage_lock_sync(exclusive=True):
     recover_interrupted_restore()
@@ -49,13 +52,37 @@ async def scheduler():
                 ids = [r['id'] for r in db.execute('SELECT id FROM accounts WHERE enabled=1')]
             await asyncio.gather(*(asyncio.to_thread(sync_account, account_id) for account_id in ids), return_exceptions=True)
 
+async def notification_worker():
+    while True:
+        async with storage_lock():
+            sending = asyncio.create_task(asyncio.to_thread(notifications.deliver_next))
+            try:
+                sent = await asyncio.shield(sending)
+            except asyncio.CancelledError:
+                await asyncio.gather(sending, return_exceptions=True)
+                raise
+            except sqlite3.Error:
+                sent = False
+        await asyncio.sleep(0.6 if sent else 2)
+
 @asynccontextmanager
 async def lifespan(app):
-    task = asyncio.create_task(scheduler())
-    yield
-    task.cancel()
+    tasks = [asyncio.create_task(scheduler()), asyncio.create_task(notification_worker())]
+    try:
+        yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 app = FastAPI(lifespan=lifespan)
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith('/api/notification-channels'):
+        # Pydantic may include rejected inputs verbatim, including push credentials.
+        return JSONResponse({'detail':'通知配置格式不正确，请检查输入'}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
 
 @app.middleware('http')
 async def protection(request: Request, call_next):
@@ -215,6 +242,9 @@ async def restore_backup_file(file: UploadFile = File(...)):
         await asyncio.to_thread(ensure_config)
         await asyncio.to_thread(auth.ensure_auth)
         await asyncio.to_thread(auth.revoke_all)
+        # A restored snapshot may contain notifications sent after it was taken.
+        with connect() as db:
+            db.execute('UPDATE notification_deliveries SET pending=0 WHERE pending=1')
         response=JSONResponse({'ok':True,'reauthenticate':True,**result})
         response.delete_cookie('piaoxu_session', path='/')
         return response
@@ -775,6 +805,45 @@ def reprocess_mail(email_id: int):
     return {'created':len(result['created_ids']), 'existing':len(result['existing_ids']),
             'retried':retried,'retry_failed':retry_failed,'errors':result['errors'],
             'files_found':result['files_found'],'status':row['status'] if row else result['status']}
+
+@app.get('/api/notification-channels')
+def notification_channels():
+    return notifications.channels()
+
+
+@app.post('/api/notification-channels', status_code=201)
+def create_notification_channel(value: notifications.ChannelInput):
+    return save_notification_channel(value)
+
+
+@app.put('/api/notification-channels/{channel_id}')
+def save_notification_channel(value: notifications.ChannelInput, channel_id: Optional[int] = None):
+    try:
+        return notifications.save_channel(value, channel_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except LookupError:
+        raise HTTPException(404, '通知渠道不存在') from None
+
+
+@app.delete('/api/notification-channels/{channel_id}', status_code=204)
+def delete_notification_channel(channel_id: int):
+    try:
+        notifications.delete_channel(channel_id)
+    except LookupError:
+        raise HTTPException(404, '通知渠道不存在') from None
+
+
+@app.post('/api/notification-channels/{channel_id}/test')
+def test_notification_channel(channel_id: int):
+    try:
+        error = notifications.test_channel(channel_id)
+    except LookupError:
+        raise HTTPException(404, '通知渠道不存在') from None
+    if error:
+        raise HTTPException(502, error)
+    return {'message':'平台已受理测试消息，请查看接收端'}
+
 
 @app.get('/api/ai-settings')
 def ai_settings():

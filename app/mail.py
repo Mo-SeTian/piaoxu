@@ -13,6 +13,7 @@ from .db import connect
 from .download import candidates, download
 from .email_html import HTML_VERSION, prepare_html
 from .service import DUPLICATE_REASON, cipher, import_file, matching_mail_original, now
+from .notifications import queue_notification
 
 locks_guard = threading.Lock()
 account_locks = {}
@@ -205,11 +206,19 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
         created_ids = {merged.get(ident,ident) for ident in created_ids}
         existing_ids = {merged.get(ident,ident) for ident in existing_ids} - created_ids
     with connect() as db:
-        statuses=db.execute('SELECT i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id WHERE ie.email_id=?',(email_id,)).fetchall()
+        statuses=db.execute('SELECT i.id,i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id WHERE ie.email_id=?',(email_id,)).fetchall()
         needs_review=any(r['recognition_status']=='识别失败' and r['duplicate_state']!='confirmed' for r in statuses)
         confirmed=any(r['duplicate_state']=='confirmed' for r in statuses)
         state=('发票链接待处理' if links and not attachments else '导入失败') if errors else ('识别失败' if needs_review else ('重复发票' if confirmed else ('已识别' if statuses else ('发票链接待处理' if '发票' in subject and 'http' in body_text else '普通邮件'))))
         db.execute('UPDATE emails SET status=? WHERE id=?',(state,email_id))
+        if not force:
+            fresh = [row for row in statuses if row['id'] in created_ids]
+            recognized = sum(row['recognition_status'] == '已识别' for row in fresh)
+            if recognized:
+                queue_notification(db, email_id, 'received', recognized)
+            if (any(row['recognition_status'] == '识别失败' for row in fresh)
+                    or (state in ('导入失败', '发票链接待处理') and (invoice_hint or attachments or links))):
+                queue_notification(db, email_id, 'failed', 0)
     return {'email_id':email_id,'created_ids':sorted(created_ids),'existing_ids':sorted(existing_ids),'files_found':len(attachments),'links_found':len(links),'errors':len(errors),'status':state}
 
 def sync_folder(mail, account_id, token, folder):

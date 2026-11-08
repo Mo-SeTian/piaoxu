@@ -128,11 +128,12 @@ def _check_database(config_dir, data_dir, manifest_by_path):
             accounts=db.execute('SELECT secret FROM accounts').fetchall()
             settings=db.execute("SELECT value FROM settings WHERE key='ai_settings'").fetchone()
             secret=json.loads(settings['value']).get('secret','') if settings else ''
-            if accounts or secret:
+            channels = db.execute('SELECT secret FROM notification_channels').fetchall() if 'notification_channels' in tables else []
+            if accounts or channels or secret:
                 key=config_dir/'.mail-key'
                 if not key.is_file(): raise ValueError('备份缺少配置密钥')
                 cipher=Fernet(key.read_bytes())
-                for row in accounts: cipher.decrypt(row['secret'].encode())
+                for row in [*accounts, *channels]: cipher.decrypt(row['secret'].encode())
                 if secret: cipher.decrypt(secret.encode())
             invoices=db.execute('SELECT sha256,stored_name FROM invoices').fetchall()
             originals = db.execute('SELECT sha256,stored_name FROM invoice_originals').fetchall() if 'invoice_originals' in tables else []

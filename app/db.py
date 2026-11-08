@@ -40,6 +40,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, reimbursed INTEGER NOT NULL DEFAULT 0, reimbursed_at TEXT);
         CREATE TABLE IF NOT EXISTS group_invoices(group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE, invoice_id INTEGER NOT NULL UNIQUE REFERENCES invoices(id), PRIMARY KEY(group_id, invoice_id));
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS notification_channels(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider TEXT NOT NULL,
+            enabled INTEGER NOT NULL, options TEXT NOT NULL, secret TEXT NOT NULL,
+            last_result TEXT, last_attempt_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS notification_deliveries(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+            channel_id INTEGER NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+            event TEXT NOT NULL, invoice_count INTEGER NOT NULL, pending INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(email_id, channel_id, event)
+        );
+        CREATE INDEX IF NOT EXISTS notification_pending ON notification_deliveries(id) WHERE pending=1;
         ''')
 
         invoice_cols = {r['name'] for r in db.execute('PRAGMA table_info(invoices)')}

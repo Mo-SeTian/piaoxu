@@ -1,10 +1,10 @@
-const state={username:'',page:'invoices',invoices:[],groups:[],accounts:[],emails:[],selected:new Set(),selectedRecords:new Map(),invoicePage:0,invoiceTotal:0,invoiceCount:0,unpaidCount:0,unpaidAmount:0,reviewCount:0,filter:'全部',query:'',account:'',emailFilter:'all',emailPage:0,emailTotal:0,pendingPage:0,pendingTotal:0,preview:null,settings:['抬头','商户','金额','开票日期'],ai:{base_url:'',model:'',auto_enabled:false,has_key:false}};
+const state={username:'',page:'invoices',invoices:[],groups:[],accounts:[],emails:[],notifications:[],selected:new Set(),selectedRecords:new Map(),invoicePage:0,invoiceTotal:0,invoiceCount:0,unpaidCount:0,unpaidAmount:0,reviewCount:0,filter:'全部',query:'',account:'',emailFilter:'all',emailPage:0,emailTotal:0,pendingPage:0,pendingTotal:0,preview:null,settings:['抬头','商户','金额','开票日期'],ai:{base_url:'',model:'',auto_enabled:false,has_key:false}};
 const content=document.querySelector('#content'),dialog=document.querySelector('#dialog'),form=document.querySelector('#dialog-form');
 const mobileNavQuery='(max-width:640px), (orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse)';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cash=n=>n==null?'—':'¥'+(n/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const date=x=>x?esc(x.slice(0,10)):'—';
-const titles={invoices:'发票库',groups:'报销组',emails:'全部邮件',failed:'识别失败',accounts:'邮箱管理',ai:'AI 辅助识别',settings:'偏好设置',backup:'备份与恢复'};
+const titles={invoices:'发票库',groups:'报销组',emails:'全部邮件',failed:'识别失败',accounts:'邮箱管理',ai:'AI 辅助识别',notifications:'消息推送',settings:'偏好设置',backup:'备份与恢复'};
 const routePage=()=>location.hash==='#security'?'settings':Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'invoices';
 state.page=routePage();
 if(location.hash==='#security')history.replaceState(null,'','#settings');
@@ -23,6 +23,7 @@ async function load({background=false}={}){
   if(page==='groups')requests.push(['groups','/api/groups']);
   if(page==='settings')requests.push(['settings','/api/settings']);
   if(page==='ai')requests.push(['ai','/api/ai-settings']);
+  if(page==='notifications')requests.push(['notifications','/api/notification-channels']);
   if(page==='emails'){
     const params=new URLSearchParams({limit:'50',offset:String(state.emailPage*50),invoice_status:state.emailFilter});
     if(state.account)params.set('account_id',state.account);
@@ -32,7 +33,7 @@ async function load({background=false}={}){
   if(seq!==loadSequence||page!==state.page||(background&&backgroundRefreshBlocked()))return;
   const data=Object.fromEntries(values),snapshot=JSON.stringify([page,data]);
   if(background&&snapshot===lastLoadSnapshot)return;
-  for(const key of ['invoices','groups','accounts','ai'])if(data[key])state[key]=data[key];
+  for(const key of ['invoices','groups','accounts','ai','notifications'])if(data[key])state[key]=data[key];
   if(data.settings)state.settings=data.settings.fields;
   state.invoiceCount=data.summary.invoices;state.unpaidCount=data.summary.unreimbursed;state.unpaidAmount=data.summary.unreimbursed_amount_cents;state.reviewCount=data.summary.failed_invoices+data.summary.pending_emails;
   if(data.invoiceResults){const last=Math.max(0,Math.ceil(data.invoiceResults.total/50)-1);if(state.invoicePage>last){state.invoicePage=last;return load()}state.invoices=data.invoiceResults.items;state.invoiceTotal=data.invoiceResults.total;for(const item of state.invoices)if(state.selected.has(item.id))state.selectedRecords.set(item.id,item)}
@@ -271,7 +272,7 @@ function render(){
   document.querySelector('#breadcrumb').textContent=state.page==='backup'?'偏好设置 / 备份与恢复':titles[state.page];
   document.querySelectorAll('nav button[data-page]').forEach(b=>{const active=b.dataset.page===(state.page==='backup'?'settings':state.page);b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
   const more=document.querySelector('#mobile-more'),activeMore=!['invoices','groups','emails'].includes(state.page);more.classList.toggle('active',activeMore);if(activeMore)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');
-  content.innerHTML=({invoices:invoicePage,groups:groupPage,emails:emailsPage,failed:failedPage,accounts:accountsPage,ai:aiPage,settings:settingsPage,backup:backupPage}[state.page])();
+  content.innerHTML=({invoices:invoicePage,groups:groupPage,emails:emailsPage,failed:failedPage,accounts:accountsPage,ai:aiPage,notifications:notificationsPage,settings:settingsPage,backup:backupPage}[state.page])();
   initPdfPreviews(content);
   if(pageChanged)uiMotion(content);else if(state.page==='invoices'&&renderedPreview!==state.preview)uiMotion(content.querySelector('.invoice-preview'));
   renderedPage=state.page;renderedPreview=state.preview;
@@ -380,7 +381,7 @@ let searchTimer;content.addEventListener('input',e=>{if(e.target.id==='template'
 form.addEventListener('change',e=>{if(e.target.id==='upload-select-all')form.querySelectorAll('[data-upload-choice]:not(:disabled)').forEach(input=>input.checked=e.target.checked);if(e.target.id==='upload-select-all'||e.target.hasAttribute('data-upload-choice'))updateUploadSelection()});
 dialog.addEventListener('cancel',e=>{if(form.dataset.uploading==='1')e.preventDefault()});
 dialog.addEventListener('close',()=>{pendingUpload=[];pendingRestore=null;delete form.dataset.uploading});
-form.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(form);const type=form.dataset.submit;try{if(type==='delete-invoices'){const items=[...pendingDelete],ids=items.map(item=>item.id),button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在删除…';try{const result=await (await api('/api/invoices/delete',{method:'POST',body:JSON.stringify({items})})).json();delete form.dataset.uploading;dialog.close();ids.forEach(id=>{state.selected.delete(id);state.selectedRecords.delete(id)});state.preview=null;ids.forEach(id=>pdfPages.delete(id));try{await load()}catch{toast('已删除，请刷新页面查看');return}toast(result.cleanup_pending?'发票已删除，部分原件未清理，请检查权限并重启':'已删除发票')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='删除发票';throw error}return}if(type==='restore-backup'){if(!pendingRestore)return;const data=new FormData();data.append('file',pendingRestore);const button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button,input')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在恢复…';try{const restored=await (await api('/api/backup/restore',{method:'POST',body:data})).json();delete form.dataset.uploading;dialog.close();showLogin(restored.recovery_incomplete?'备份已恢复。恢复前的数据不完整，已保留原始副本。请使用备份中的账号密码登录。':'备份已恢复，请使用备份中的账号密码重新登录。')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='确认恢复';throw error}return}if(type==='upload-preview'){const selected=[...form.querySelectorAll('[data-upload-choice]:checked')].map(input=>pendingUpload[Number(input.dataset.uploadChoice)]);if(selected.length)await importUpload(selected);return}if(type==='invoice'){const amount=f.get('amount');await api(`/api/invoices/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({buyer:f.get('buyer'),seller:f.get('seller'),amount_cents:amount===''?null:Math.round(Number(amount)*100),invoice_date:f.get('invoice_date')||null,invoice_number:f.get('invoice_number'),export_name:f.get('export_name')})})}if(type==='credentials'){await api(`/api/accounts/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({auth_code:f.get('auth_code')})})}if(type==='account'){const account=await (await api('/api/accounts',{method:'POST',body:JSON.stringify(Object.fromEntries(f))})).json();await api(`/api/accounts/${account.id}/sync`,{method:'POST'})}if(type==='group'){await api('/api/groups',{method:'POST',body:JSON.stringify({name:f.get('name'),ids:[...state.selected]})});clearSelection();navigate('groups')}dialog.close();await load();toast(type==='account'?'邮箱已添加，正在首次同步':'已保存')}catch(err){form.querySelector('.inline-error').textContent=err.message}});
+form.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(form);const type=form.dataset.submit;try{if(type==='notification-save'||type==='notification-delete'){await submitNotification(type,f);return}if(type==='delete-invoices'){const items=[...pendingDelete],ids=items.map(item=>item.id),button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在删除…';try{const result=await (await api('/api/invoices/delete',{method:'POST',body:JSON.stringify({items})})).json();delete form.dataset.uploading;dialog.close();ids.forEach(id=>{state.selected.delete(id);state.selectedRecords.delete(id)});state.preview=null;ids.forEach(id=>pdfPages.delete(id));try{await load()}catch{toast('已删除，请刷新页面查看');return}toast(result.cleanup_pending?'发票已删除，部分原件未清理，请检查权限并重启':'已删除发票')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='删除发票';throw error}return}if(type==='restore-backup'){if(!pendingRestore)return;const data=new FormData();data.append('file',pendingRestore);const button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button,input')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在恢复…';try{const restored=await (await api('/api/backup/restore',{method:'POST',body:data})).json();delete form.dataset.uploading;dialog.close();showLogin(restored.recovery_incomplete?'备份已恢复。恢复前的数据不完整，已保留原始副本。请使用备份中的账号密码登录。':'备份已恢复，请使用备份中的账号密码重新登录。')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='确认恢复';throw error}return}if(type==='upload-preview'){const selected=[...form.querySelectorAll('[data-upload-choice]:checked')].map(input=>pendingUpload[Number(input.dataset.uploadChoice)]);if(selected.length)await importUpload(selected);return}if(type==='invoice'){const amount=f.get('amount');await api(`/api/invoices/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({buyer:f.get('buyer'),seller:f.get('seller'),amount_cents:amount===''?null:Math.round(Number(amount)*100),invoice_date:f.get('invoice_date')||null,invoice_number:f.get('invoice_number'),export_name:f.get('export_name')})})}if(type==='credentials'){await api(`/api/accounts/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({auth_code:f.get('auth_code')})})}if(type==='account'){const account=await (await api('/api/accounts',{method:'POST',body:JSON.stringify(Object.fromEntries(f))})).json();await api(`/api/accounts/${account.id}/sync`,{method:'POST'})}if(type==='group'){await api('/api/groups',{method:'POST',body:JSON.stringify({name:f.get('name'),ids:[...state.selected]})});clearSelection();navigate('groups')}dialog.close();await load();toast(type==='account'?'邮箱已添加，正在首次同步':'已保存')}catch(err){form.querySelector('.inline-error').textContent=err.message}});
 bootstrap();
 document.addEventListener('pointerdown',()=>{pointerActive=true});
 for(const event of ['pointerup','pointercancel'])document.addEventListener(event,()=>{pointerActive=false;lastInteraction=Date.now()});
@@ -392,7 +393,7 @@ document.addEventListener('submit',async e=>{if(e.target.id!=='ai-settings-form'
 
 function showLogin(message=''){
   const screen=document.querySelector('#login-screen'),shell=document.querySelector('.shell');loadSequence++;
-  pdfPages.clear();mailReprocessFeedback.clear();lastLoadSnapshot='';if(!shell.hidden){Object.assign(state,{username:'',invoices:[],groups:[],accounts:[],emails:[],preview:null,query:'',account:'',emailFilter:'all'});clearSelection();if(dialog.open)dialog.close();closeNav()}
+  pdfPages.clear();mailReprocessFeedback.clear();lastLoadSnapshot='';if(!shell.hidden){Object.assign(state,{username:'',invoices:[],groups:[],accounts:[],emails:[],notifications:[],preview:null,query:'',account:'',emailFilter:'all'});clearSelection();if(dialog.open)dialog.close();closeNav()}
   shell.hidden=true;screen.hidden=false;
   if(message)screen.querySelector('.login-error').textContent=message;
 }
@@ -426,4 +427,129 @@ content.addEventListener('click',async e=>{
     const show=(key,value)=>value==null||value===''?'未识别':key==='amount_cents'?cash(value):String(value);
     result.innerHTML=`<strong>示例识别：${response.matched.length} / 5 项与样例一致</strong><p class="hint">这是虚拟样例结果，真实发票仍需人工核对。</p><dl>${Object.entries(labels).map(([key,label])=>`<dt>${label}</dt><dd>${esc(show(key,response.actual[key]))} <span class="muted">（样例：${esc(show(key,response.expected[key]))}）</span></dd>`).join('')}</dl>`;
   }catch(error){result.textContent=error.message}finally{buttons.forEach(item=>item.disabled=false);target.removeAttribute('aria-busy')}
+});
+
+const pushPlatforms = {wxpusher:'WxPusher', wecom:'企业微信应用', serverchan:'Server酱'};
+const pushCredentials = {wxpusher:'AppToken', wecom:'应用 Secret', serverchan:'SendKey'};
+
+function notificationsPage(){
+  const heading = header('消息推送','邮箱自动收票成功或识别失败时，向已启用的渠道发送通知。',
+    '<button type="button" class="button primary" data-push-action="add">'+uiIcon('plus')+'添加渠道</button>');
+  const rows = state.notifications.map(channel=>{
+    const when = channel.last_attempt_at ? new Date(channel.last_attempt_at).toLocaleString('zh-CN') : '';
+    return `<div class="row account-row">
+      <strong>${esc(channel.name)}</strong>
+      <div>${esc(pushPlatforms[channel.provider])} · ${channel.enabled?'已启用':'已停用'}
+        <div class="muted" role="status" data-push-result="${channel.id}">${channel.last_result?
+          esc(when+' · '+channel.last_result):'尚未发送'}</div>
+      </div>
+      <div class="actions">
+        <button class="button" type="button" data-push-action="test" data-id="${channel.id}">发送测试</button>
+        <button class="button" type="button" data-push-action="edit" data-id="${channel.id}">编辑</button>
+        <button class="button danger" type="button" data-push-action="delete" data-id="${channel.id}">删除</button>
+      </div>
+    </div>`;
+  }).join('');
+  return heading+`<div class="section-head"><h2>通知渠道 <span class="muted">${state.notifications.length} 个</span></h2></div>
+    <div class="box list-box">${rows||empty('还没有通知渠道。添加后可发送测试消息。')}</div>
+    <p class="hint">每封邮件按结果汇总通知。消息仅包含结果和数量，推送凭证加密保存在本地。</p>`;
+}
+
+function updateNotificationFields(provider){
+  form.querySelectorAll('[data-push-provider]').forEach(group=>{
+    group.hidden = group.dataset.pushProvider !== provider;
+    group.querySelectorAll('input').forEach(input=>input.disabled=group.hidden);
+  });
+  form.querySelector('[data-push-secret-label]').textContent=pushCredentials[provider];
+}
+
+function editNotification(channel){
+  const provider = channel?.provider || 'wxpusher', options = channel?.options || {};
+  const selection = Object.entries(pushPlatforms).map(([key,label])=>
+    `<option value="${key}" ${key===provider?'selected':''}>${label}</option>`).join('');
+  openDialog(channel?'编辑通知渠道':'添加通知渠道',`
+    <div class="fields">
+      <label class="field">渠道名称<input name="name" required maxlength="80" value="${esc(channel?.name)}" placeholder="例如：我的微信"></label>
+      <label class="field">推送平台<select name="provider" ${channel?'disabled':''}>${selection}</select></label>
+      <label class="field full"><span data-push-secret-label></span>
+        <input name="secret" type="password" autocomplete="new-password" maxlength="512"
+          ${channel?'placeholder="已保存，留空保留原凭证"':'required'}>
+      </label>
+    </div>
+    <div data-push-provider="wxpusher" hidden><div class="fields">
+      <label class="field full">接收 UID<input name="uids" maxlength="4096" value="${esc(options.uids?.join(', '))}" placeholder="UID_…"></label>
+      <label class="field full">主题 ID<input name="topics" maxlength="100" value="${esc(options.topics?.join(', '))}" placeholder="例如：123">
+        <span class="hint">UID 和主题至少填写一项，多项用逗号分隔。</span>
+      </label>
+    </div></div>
+    <div data-push-provider="wecom" hidden><div class="fields">
+      <label class="field">企业 ID<input name="corp_id" maxlength="128" value="${esc(options.corp_id)}" required></label>
+      <label class="field">应用 AgentId<input name="agent_id" inputmode="numeric" maxlength="12" value="${esc(options.agent_id)}" required></label>
+      <label class="field full">接收成员 UserID<input name="users" maxlength="4096" value="${esc(options.users?.join(', '))}" required>
+        <span class="hint">多名成员用逗号分隔。单独填写 @all 会发送给应用可见范围内的所有成员。</span>
+      </label>
+    </div></div>
+    <div data-push-provider="serverchan" hidden><p class="hint">支持 Server酱 Turbo 和 Server酱³ 的 SendKey。</p></div>
+    <div class="check-list"><label><input type="checkbox" name="enabled" ${channel?.enabled===false?'':'checked'}> 启用自动通知</label></div>
+  `,'保存渠道');
+  form.dataset.submit='notification-save';
+  form.dataset.id=channel?.id || '';
+  updateNotificationFields(provider);
+}
+
+form.addEventListener('change', e=>{
+  if(form.dataset.submit==='notification-save' && e.target.name==='provider'){
+    updateNotificationFields(e.target.value);
+  }
+});
+
+async function submitNotification(type, data){
+  if(form.dataset.uploading)return;
+  const id=form.dataset.id, path='/api/notification-channels'+(id?'/'+id:'');
+  const buttons=[...form.querySelectorAll('button')], button=form.querySelector('[type=submit]');
+  const previousLabel=button.textContent;
+  form.querySelector('.inline-error').textContent='';
+  form.dataset.uploading='1';
+  buttons.forEach(item=>item.disabled=true);
+  button.textContent='正在处理…';
+  try{
+    if(type==='notification-delete')await api(path,{method:'DELETE'});
+    else{
+      const value=Object.fromEntries(data);
+      value.provider=form.elements.provider.value;
+      value.enabled=data.has('enabled');
+      await api(path,{method:id?'PUT':'POST',body:JSON.stringify(value)});
+    }
+    dialog.close();
+    try{await load()}catch{toast('已保存变更，请刷新查看');return}
+    toast(type==='notification-delete'?'已删除通知渠道':'已保存通知渠道');
+  }finally{
+    delete form.dataset.uploading;
+    buttons.forEach(item=>item.disabled=false);
+    button.textContent=previousLabel;
+  }
+}
+
+content.addEventListener('click',async e=>{
+  const button=e.target.closest('[data-push-action]');
+  if(!button)return;
+  const action=button.dataset.pushAction;
+  if(action==='add'){editNotification();return}
+  const channel=state.notifications.find(item=>item.id===Number(button.dataset.id));
+  if(!channel)return;
+  if(action==='edit'){editNotification(channel);return}
+  if(action==='delete'){
+    openDialog('删除通知渠道',`<p class="sub">确定删除「${esc(channel.name)}」？此渠道将停止接收通知。</p>`,'删除渠道');
+    form.dataset.submit='notification-delete';
+    form.dataset.id=channel.id;
+    return;
+  }
+  const result=content.querySelector(`[data-push-result="${channel.id}"]`);
+  button.disabled=true;
+  result.textContent='正在发送测试消息…';
+  try{
+    const response=await (await api(`/api/notification-channels/${channel.id}/test`,{method:'POST'})).json();
+    result.textContent=response.message;
+  }catch(error){result.textContent=error.message}
+  finally{button.disabled=false}
 });
