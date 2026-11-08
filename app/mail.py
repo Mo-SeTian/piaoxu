@@ -14,6 +14,7 @@ from .download import candidates, download
 from .email_html import HTML_VERSION, prepare_html
 from .service import DUPLICATE_REASON, cipher, import_file, matching_mail_original, now
 from .notifications import queue_notification
+from .merging import merge_records
 
 locks_guard = threading.Lock()
 account_locks = {}
@@ -136,12 +137,42 @@ def merge_existing_formats(email_id):
                 if reason or any(fields.get(key) in (None,'') or fields[key] != candidate[key] for key in keys): continue
             if not target or not matching_mail_original(target, fields, reason, ext): continue
             if db.execute('SELECT 1 FROM invoices WHERE duplicate_of=?',(candidate['id'],)).fetchone(): continue
-            db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
-                       (target['id'],candidate['sha256'],candidate['original_name'],candidate['stored_name']))
-            db.execute('INSERT OR IGNORE INTO invoice_emails(invoice_id,email_id) SELECT ?,email_id FROM invoice_emails WHERE invoice_id=?',(target['id'],candidate['id']))
-            db.execute('DELETE FROM invoices WHERE id=?',(candidate['id'],))
+            merge_records(db, candidate, target)
             merged[candidate['id']] = target['id']
     return merged
+
+
+def refresh_native_mail_invoices(email_id):
+    """Reparse untouched AI-assisted mail imports before reconciling their formats."""
+    from .db import FILES
+    from .recognition import recognize
+    from .service import duplicate_invoice, UNVERIFIED_REASON
+    with connect() as db:
+        rows = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
+            WHERE ie.email_id=? AND i.recognition_status='识别失败' AND i.ai_suggestion<>'{}'
+            AND i.duplicate_state IN ('','pending','unverified')
+            AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name=''
+            AND NOT EXISTS (SELECT 1 FROM group_invoices g WHERE g.invoice_id=i.id)
+            ORDER BY i.id""", (email_id,)).fetchall()
+    for row in rows:
+        parts = set(row['failure_reason'].split('；'))
+        if 'AI 建议已生成，请人工核对' not in parts or parts - {'AI 建议已生成，请人工核对', DUPLICATE_REASON, UNVERIFIED_REASON}:
+            continue
+        fields, reason = recognize(FILES / row['stored_name'])
+        keys = ('buyer','seller','amount_cents','invoice_date','invoice_number')
+        if reason or any(fields.get(key) in (None,'') for key in keys): continue
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            latest = db.execute('SELECT * FROM invoices WHERE id=?', (row['id'],)).fetchone()
+            if not latest or dict(latest) != dict(row): continue
+            if db.execute('SELECT 1 FROM group_invoices WHERE invoice_id=?', (row['id'],)).fetchone(): continue
+            duplicate = duplicate_invoice(db, fields['invoice_number'], row['id'])
+            db.execute('''UPDATE invoices SET buyer=?,seller=?,amount_cents=?,invoice_date=?,invoice_number=?,
+                recognition_status=?,failure_reason=?,ai_suggestion='{}',duplicate_of=?,duplicate_state=? WHERE id=?''',
+                       (*[fields[key] for key in keys], '识别失败' if duplicate else '已识别',
+                        DUPLICATE_REASON if duplicate else '', duplicate['id'] if duplicate else None,
+                        'pending' if duplicate else '', row['id']))
+
 
 def process_message(mail, account_id, uid, namespace, folder, old=None, force=False):
     uid_bytes=uid.encode()
@@ -202,6 +233,7 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
             elif ident not in created_ids: existing_ids.add(ident)
         except Exception: errors.append('附件导入失败')
     if force:
+        refresh_native_mail_invoices(email_id)
         merged = merge_existing_formats(email_id)
         created_ids = {merged.get(ident,ident) for ident in created_ids}
         existing_ids = {merged.get(ident,ident) for ident in existing_ids} - created_ids

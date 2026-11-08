@@ -982,3 +982,187 @@ def test_old_ai_ofd_is_merged_only_after_native_verification(isolated_storage,mo
     assert merge_existing_formats(email_id)=={second:first}
     rows=client.get('/api/invoices').json()
     assert len(rows)==1 and len(rows[0]['other_originals'])==1
+
+
+def discounted_invoice_files():
+    import fitz
+    fields={'buyer':'星辰贸易有限公司','seller':'远航科技有限公司','amount_cents':1690,
+            'invoice_date':'2026-11-09','invoice_number':'12345678901234567890'}
+    pdf=fitz.open();page=pdf.new_page(width=700,height=350)
+    def put(x,y,text): page.insert_text((x,y),text,fontname='china-s',fontsize=10)
+    # Separate text objects and shuffled insertion order reproduce the issuer layout.
+    put(81,110,fields['buyer']);put(366,110,fields['seller'])
+    put(390,55,'开票日期：');put(390,35,'发票号码：')
+    put(440,35,fields['invoice_number']);put(440,55,'2026年11月09日')
+    put(100,35,'电子发票');put(450,200,'￥16.90');put(30,200,'价税合计（小写）')
+    for x,first,second in [(26,'购','买'),(312,'销','售')]:
+        put(x,103,first);put(x,113,second);put(x,123,'方')
+    for x in [41,326]: put(x,110,'名');put(x+14,110,'称:')
+    content=pdf.tobytes();pdf.close()
+    xml=f'''<EInvoice><Header><EIid>{fields['invoice_number']}</EIid></Header><EInvoiceData>
+      <SellerInformation><SellerName>{fields['seller']}</SellerName></SellerInformation>
+      <BuyerInformation><BuyerName>{fields['buyer']}</BuyerName></BuyerInformation>
+      <BasicInformation><TotalAmWithoutTax>14.96</TotalAmWithoutTax><TotalTaxAm>1.94</TotalTaxAm>
+      <TotalTax-includedAmount>16.90</TotalTax-includedAmount><RequestTime>2026-11-08 19:00:00</RequestTime></BasicInformation>
+      <IssuItemInformation><TotaltaxIncludedAmount>21.90</TotaltaxIncludedAmount></IssuItemInformation>
+      <IssuItemInformation><TotaltaxIncludedAmount>-5.00</TotaltaxIncludedAmount></IssuItemInformation>
+      </EInvoiceData><TaxSupervisionInfo><InvoiceNumber>{fields['invoice_number']}</InvoiceNumber>
+      <IssueTime>2026-11-09 08:00:00</IssueTime></TaxSupervisionInfo></EInvoice>'''.encode()
+    return fields,content,xml
+
+
+def test_native_split_label_pdf_and_discount_xml_agree(tmp_path,monkeypatch):
+    from app import recognition
+    fields,pdf,xml=discounted_invoice_files()
+    def no_ocr(*args,**kwargs): pytest.fail('A text invoice should not need OCR')
+    monkeypatch.setattr(recognition,'_recognize_images',no_ocr)
+    for ext,content in [('pdf',pdf),('xml',xml)]:
+        path=tmp_path/('invoice.'+ext);path.write_bytes(content)
+        actual,reason=recognition.recognize(path)
+        assert not reason
+        assert all(actual[key]==value for key,value in fields.items())
+    # Item prices must never stand in for a missing invoice-level total.
+    path=tmp_path/'missing-total.xml'
+    path.write_bytes(xml.replace(b'<TotalTax-includedAmount>16.90</TotalTax-includedAmount>',b''))
+    actual,reason=recognition.recognize(path)
+    assert actual['amount_cents'] is None and '金额' in reason
+
+
+def test_mail_reprocess_corrects_old_ai_fields_and_merges_formats(isolated_storage,monkeypatch):
+    from email.message import EmailMessage
+    from app import mail
+    config,data,client,db,service,backup=isolated_storage
+    fields,pdf,xml=discounted_invoice_files()
+    message=EmailMessage();message['Subject']='电子发票';message.set_content('请查收附件')
+    for name,content,kind in [('a.xml',xml,'xml'),('a.pdf',pdf,'pdf')]:
+        message.add_attachment(content,maintype='application',subtype=kind,filename=name)
+    monkeypatch.setattr(mail.imaplib,'IMAP4_SSL',synthetic_imap({b'1':message.as_bytes()},[],[b'123']))
+    account=client.post('/api/accounts',json={'name':'测试邮箱','email':'native-test@qq.com','auth_code':'fake'}).json()['id']
+    with monkeypatch.context() as old:
+        old.setattr(service,'recognize',lambda path:({**fields,'amount_cents':2190 if path.suffix=='.xml' else 1690},'未识别：抬头'))
+        old.setattr(service,'assist',lambda path,result,reason:(result,'AI 建议已生成，请人工核对',fields))
+        assert mail.sync_account(account)==1
+    records=client.get('/api/invoices').json();assert len(records)==2
+    assert all(item['recognition_status']=='识别失败' for item in records)
+    email_id=records[0]['email_id']
+    result=client.post(f'/api/emails/{email_id}/reprocess')
+    assert result.status_code==200 and result.json()['status']=='已识别'
+    records=client.get('/api/invoices').json();assert len(records)==1
+    item=records[0]
+    assert all(item[key]==value for key,value in fields.items())
+    assert item['original_name']=='a.pdf' and len(item['other_originals'])==1
+    assert client.get('/api/summary').json()['failed_invoices']==0
+    assert client.post(f'/api/emails/{email_id}/reprocess').json()['existing']==1
+    response=client.post('/api/invoices/export',json={'ids':[item['id']]})
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert {archive.read(name) for name in archive.namelist()}=={pdf,xml}
+
+
+def test_native_refresh_preserves_human_decisions(isolated_storage,monkeypatch):
+    from app.mail import refresh_native_mail_invoices
+    config,data,client,db,service,backup=isolated_storage
+    fields,pdf,xml=discounted_invoice_files()
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+        email_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject) VALUES(?,?,?,?,?)",(account,'test','1','','发票')).lastrowid
+    monkeypatch.setattr(service,'recognize',lambda path:(fields.copy(),''))
+    ids=[]
+    for index in range(4):
+        content=xml.replace(b'</EInvoice>',f'<Extra>{index}</Extra></EInvoice>'.encode())
+        ids.append(service.import_file(f'{index}.xml',content,'邮件')[0])
+    with db.connect() as conn:
+        for ident in ids:
+            conn.execute('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',(ident,email_id))
+            conn.execute("UPDATE invoices SET ai_suggestion=?,recognition_status='识别失败',failure_reason=?,amount_cents=2190 WHERE id=?",(json.dumps(fields),'AI 建议已生成，请人工核对',ident))
+        conn.execute("UPDATE invoices SET duplicate_state='confirmed' WHERE id=?",(ids[0],))
+        conn.execute("UPDATE invoices SET failure_reason='未填写：抬头' WHERE id=?",(ids[1],))
+        conn.execute('UPDATE invoices SET reimbursed=1 WHERE id=?',(ids[2],))
+        group=conn.execute("INSERT INTO groups(name,created_at) VALUES('测试','2026-11-09')").lastrowid
+        conn.execute('INSERT INTO group_invoices(group_id,invoice_id) VALUES(?,?)',(group,ids[3]))
+    refresh_native_mail_invoices(email_id)
+    with db.connect() as conn:
+        assert all(row['amount_cents']==2190 for row in conn.execute('SELECT * FROM invoices'))
+
+
+def merge_payload(client,source,target):
+    items={row['id']:row for row in client.get('/api/invoices').json()}
+    return {'target_id':target,'sha256':items[source]['sha256'],'target_sha256':items[target]['sha256']}
+
+
+def test_explicit_merge_keeps_originals_mail_and_reimbursement(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    content=invoice_xml('12345678901234567890')
+    target=service.import_file('base.xml',content,'本地上传')[0]
+    source_content=content.replace(b'</Invoice>',b'<Extra>copy</Extra></Invoice>')
+    source=service.import_file('copy.xml',source_content,'邮件')[0]
+    extra=b'%PDF-1.7\nextra\n%%EOF'
+    import hashlib
+    digest=hashlib.sha256(extra).hexdigest();stored=digest+'.pdf';(data/'files'/stored).write_bytes(extra)
+    account=client.post('/api/accounts',json={'name':'测试邮箱','email':'merge-test@qq.com','auth_code':'fake'}).json()['id']
+    with db.connect() as conn:
+        email_ids=[]
+        for ident in [target,source]:
+            email_id=conn.execute("INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status) VALUES(?,?,?,?,?,?)",(account,'test',str(ident),'','发票','识别失败')).lastrowid
+            email_ids.append(email_id)
+            conn.execute('INSERT INTO invoice_emails(invoice_id,email_id) VALUES(?,?)',(ident,email_id))
+            conn.execute('UPDATE invoices SET email_id=? WHERE id=?',(email_id,ident))
+        conn.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',(source,digest,'extra.pdf',stored))
+    group=client.post('/api/groups',json={'name':'测试报销组','ids':[target]}).json()['id']
+    assert client.patch(f'/api/groups/{group}',json={'reimbursed':True}).status_code==200
+    assert client.patch(f'/api/invoices/{source}/duplicate',json={'decision':'confirm'}).status_code==200
+    response=client.post(f'/api/invoices/{source}/merge',json=merge_payload(client,source,target))
+    assert response.status_code==200 and response.json()['id']==target
+    items=client.get('/api/invoices').json();assert len(items)==1
+    assert items[0]['reimbursed']==1 and len(items[0]['other_originals'])==2
+    assert len(items[0]['mail_sources'])==2 and items[0]['has_local_upload']
+    for email_id in email_ids:
+        item=client.get(f'/api/emails/{email_id}').json()
+        assert item['status']=='已识别' and [row['id'] for row in item['invoices']]==[target]
+    response=client.post('/api/invoices/export',json={'ids':[target]})
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert {archive.read(name) for name in archive.namelist()}=={content,source_content,extra}
+    assert client.get('/api/backup/export').status_code==200
+    assert client.post('/api/invoices/delete',json=delete_payload([target])).status_code==200
+    assert not list((data/'files').iterdir())
+
+
+def test_merge_rejects_conflicts_stale_identity_and_grouped_source(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    content=invoice_xml('12345678901234567890')
+    target=service.import_file('base.xml',content,'本地上传')[0]
+    source=service.import_file('copy.xml',content.replace(b'200.35',b'300.35'),'邮件')[0]
+    payload=merge_payload(client,source,target)
+    assert client.post(f'/api/invoices/{source}/merge',json=payload).status_code==409
+    with db.connect() as conn: conn.execute('UPDATE invoices SET amount_cents=20035 WHERE id=?',(source,))
+    assert client.post(f'/api/invoices/{source}/merge',json={**payload,'target_sha256':'0'*64}).status_code==409
+    assert client.post(f'/api/invoices/{source}/merge',json={**payload,'sha256':'0'*64}).status_code==409
+    assert client.patch(f'/api/invoices/{source}/duplicate',json={'decision':'distinct'}).status_code==200
+    client.post('/api/groups',json={'name':'独立报销组','ids':[source]})
+    assert client.post(f'/api/invoices/{source}/merge',json=payload).status_code==409
+    assert len(client.get('/api/invoices').json())==2
+    assert len(list((data/'files').iterdir()))==2
+
+
+def test_merging_pdf_into_xml_uses_normal_pdf_preview_and_multiple_originals(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    fields,pdf,xml=discounted_invoice_files()
+    target=service.import_file('first.xml',xml,'本地上传')[0]
+    source=service.import_file('later.pdf',pdf,'本地上传')[0]
+    result=client.post(f'/api/invoices/{source}/merge',json=merge_payload(client,source,target))
+    assert result.status_code==200
+    items=client.get('/api/invoices').json();assert len(items)==1
+    item=items[0]
+    assert item['id']==target and item['recognition_status']=='已识别'
+    assert item['original_name']=='later.pdf' and len(item['other_originals'])==1
+    assert item['other_originals'][0]['name']=='first.xml'
+    assert client.get(f'/api/invoices/{target}/original').content==pdf
+    assert client.get(f'/api/invoices/{target}/preview?info=true').json()['pages']==1
+    alternate=item['other_originals'][0]['id']
+    assert client.get(f'/api/invoices/{target}/originals/{alternate}').content==xml
+    for filename,content in [('later.pdf',pdf),('first.xml',xml)]:
+        assert service.import_file(filename,content,'本地上传')==(target,False)
+    response=client.post('/api/invoices/export',json={'ids':[target]})
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert {archive.read(name) for name in archive.namelist()}=={pdf,xml}
+    assert client.get('/api/summary').json()['invoices']==1
+    assert client.get('/api/backup/export').status_code==200

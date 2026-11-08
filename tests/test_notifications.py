@@ -3,11 +3,11 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 
-from app import mail, notifications
 from test_backup import isolated_storage, invoice_xml
 
 
 def test_configured_channels_encrypt_credentials_and_send_test(isolated_storage, monkeypatch):
+    from app import notifications
     _, _, client, db, _, _ = isolated_storage
     from app.main import app
 
@@ -74,6 +74,7 @@ def test_configured_channels_encrypt_credentials_and_send_test(isolated_storage,
 
 
 def test_sync_queues_both_outcomes_without_repeats_and_isolates_channel_failures(isolated_storage, monkeypatch):
+    from app import mail, notifications
     _, _, client, db, service, _ = isolated_storage
     for name, enabled in [('broken', True), ('working', True), ('paused', False)]:
         assert client.post('/api/notification-channels', json={

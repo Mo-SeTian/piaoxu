@@ -306,4 +306,12 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   main{padding-bottom:var(--mobile-nav-height)}main>header{display:none}.invoice-preview{display:none}.invoice-layout{display:block}.content{padding-top:calc(22px + env(safe-area-inset-top,0px))}
 }
 @media(max-width:360px){.invoice-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.invoice-metrics strong.metric-amount{font-size:24px}.invoice-metrics strong{font-size:21px}.invoice-metrics small{font-size:11px;margin-left:3px}.review-summary{padding:13px}.review-summary strong{font-size:12px}.review-summary small{font-size:11px;margin-left:6px}.selection-actions{gap:6px}.selection-actions .button{font-size:12px;padding-inline:5px}}
+dialog:has(.merge-comparison){width:min(760px,calc(100% - 32px))}
+.merge-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}
+.merge-comparison section{min-width:0;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--fog)}
+.merge-comparison h3{margin:0 0 6px;font-size:14px}.merge-comparison p{color:var(--muted);overflow-wrap:anywhere}
+.merge-comparison dl{margin:16px 0}.merge-comparison dl>div{display:grid;grid-template-columns:5em minmax(0,1fr);gap:12px;padding:7px 0;border-bottom:1px solid var(--line);align-items:start}
+.merge-comparison dt{color:var(--muted)}.merge-comparison dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.merge-comparison .merge-conflict{background:var(--peach)}
+@media(max-width:640px){.merge-comparison{grid-template-columns:minmax(0,1fr)}.merge-comparison .button{min-height:44px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

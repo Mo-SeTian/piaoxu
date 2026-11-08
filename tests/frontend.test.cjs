@@ -77,3 +77,37 @@ test('new mail filters keep server results and their pagination total',()=>{
   assert.match(html,/<option value="deleted" selected>发票已删除<\/option>/);
   assert.match(html,/<option value="has" >有发票<\/option>/);
 });
+
+function mergeHarness(){
+  const submit={disabled:false,textContent:''},error={textContent:''},buttons=[submit],calls=[],messages=[];
+  const invoice={id:1,sha256:'a'.repeat(64),original_name:'base.xml',buyer:'星辰公司',seller:'远航公司',amount_cents:1690,invoice_date:'2026-11-09',invoice_number:'12345678'};
+  const context=vm.createContext({Number,console,pendingMerge:null,
+    state:{invoices:[invoice,{...invoice,id:2,sha256:'b'.repeat(64),duplicate_of:1,original_name:'copy.xml'}],selected:new Set([2]),selectedRecords:new Map([[2,{}]])},
+    form:{dataset:{},querySelector:selector=>selector==='.inline-error'?error:submit,querySelectorAll:()=>buttons},
+    dialog:{close:()=>{context.pendingMerge=null}},pdfPages:new Map([[2,1]]),
+    esc:String,cash:value=>'¥'+value/100,toast:message=>messages.push(message),load:async()=>{},
+    openDialog:(title,body,label)=>{context.body=body;submit.textContent=label},
+    api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)})}
+  });
+  vm.runInContext(section('function showMergeDialog(', '\nfunction showUploadPreview('),context);
+  return {context,submit,error,calls,messages};
+}
+test('merge captures both record identities and blocks double submission',async()=>{
+  const h=mergeHarness();h.context.showMergeDialog(2);assert.equal(h.submit.disabled,false);
+  h.context.state.invoices[0].sha256='c'.repeat(64);
+  let release;h.context.api=async(url,options)=>{h.calls.push({url,payload:JSON.parse(options.body)});await new Promise(resolve=>release=resolve)};
+  const pending=h.context.submitInvoiceMerge();await h.context.submitInvoiceMerge();
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/invoices/2/merge');
+  assert.equal(h.calls[0].payload.target_sha256,'a'.repeat(64));assert.equal(h.calls[0].payload.sha256,'b'.repeat(64));
+  release();await pending;
+  assert.equal(h.context.state.selected.has(2),false);assert.equal(h.context.pdfPages.has(2),false);
+  assert.equal(h.submit.disabled,false);assert.match(h.messages[0],/已合并/);
+});
+test('merge shows conflicts and keeps the dialog usable after a failed request',async()=>{
+  const h=mergeHarness();h.context.state.invoices[1].amount_cents=2190;h.context.showMergeDialog(2);
+  assert.equal(h.submit.disabled,true);assert.match(h.context.body,/merge-conflict/);
+  h.context.state.invoices[1].amount_cents=1690;h.context.showMergeDialog(2);
+  h.context.api=async()=>{throw Error('发票已发生变化')};
+  await assert.rejects(h.context.submitInvoiceMerge(),/发票已发生变化/);
+  assert.equal(h.submit.disabled,false);assert.ok(h.context.pendingMerge);assert.equal(h.context.form.dataset.uploading,undefined);
+});

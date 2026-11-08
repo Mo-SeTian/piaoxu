@@ -35,6 +35,7 @@ from .storage_lock import storage_lock, storage_lock_sync
 from .config import ensure_config, mail_sync_interval
 from . import auth
 from .deletion import delete_invoices, recover_deletions
+from .merging import merge_records
 from . import notifications
 
 with storage_lock_sync(exclusive=True):
@@ -135,6 +136,11 @@ class DeleteItem(BaseModel):
 
 class DeleteInvoices(BaseModel):
     items: list[DeleteItem] = Field(min_length=1, max_length=500)
+
+class MergeInvoice(BaseModel):
+    target_id: int
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    target_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 class ExportIds(Ids):
     pdf_only: bool = False
@@ -426,6 +432,29 @@ def update_invoice(invoice_id: int, value: InvoiceUpdate):
                            (match['id'] if match else None, 'pending' if match else '', reason, '识别失败' if reason else '已识别', other['id']))
                 refresh_email_status(db, other['id'])
     return {'ok':True}
+
+@app.post('/api/invoices/{invoice_id}/merge')
+def merge_invoice(invoice_id: int, value: MergeInvoice):
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        source = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
+        target = db.execute('SELECT * FROM invoices WHERE id=?',(value.target_id,)).fetchone()
+        if not source or not target: raise HTTPException(404,'发票不存在，请刷新后重试')
+        if source['sha256'] != value.sha256 or target['sha256'] != value.target_sha256:
+            raise HTTPException(409,'发票已发生变化，请刷新后重试')
+        if invoice_id == value.target_id or target['duplicate_of'] is not None or target['duplicate_state']=='confirmed':
+            raise HTTPException(409,'请选择原始发票作为合并目标')
+        if source['reimbursed'] or source['export_name'] or db.execute('SELECT 1 FROM group_invoices WHERE invoice_id=?',(invoice_id,)).fetchone():
+            raise HTTPException(409,'请先处理本张发票的报销组、报销标记或自定义名称后再合并')
+        if not source['invoice_number'] or source['invoice_number'] != target['invoice_number']:
+            raise HTTPException(409,'发票号码不一致，无法合并')
+        for key in ('buyer','seller','amount_cents','invoice_date'):
+            if source[key] not in (None,'') and target[key] not in (None,'') and source[key] != target[key]:
+                raise HTTPException(409,'发票关键信息不一致，请核对或重新识别后再合并')
+        merge_records(db, source, target)
+        refresh_email_status(db, target['id'])
+    return {'id':target['id']}
+
 
 @app.patch('/api/invoices/{invoice_id}/duplicate')
 def resolve_duplicate(invoice_id: int, value: DuplicateDecision):

@@ -76,11 +76,19 @@ def _side_by_side_names(page):
             v[4] == second and abs(v[0]-w[0]) < 3 and 0 < v[1]-w[1] < 25 for v in words)]
         if len(markers) != 1: return {}
         marker = markers[0]
-        labels = [w for w in words if re.sub(r'[\s:：]', '', w[4]) == '名称'
-                  and 0 < w[0]-marker[0] < 80 and abs(w[1]-marker[1]) < 20]
+        name_labels = [w for w in words if re.sub(r'[\s:：]', '', w[4]) == '名称']
+        for left in words:
+            if left[4] != '名': continue
+            right = [w for w in words if re.sub(r'[\s:：]', '', w[4]) == '称'
+                     and 0 <= w[0]-left[2] < 12 and abs((w[1]+w[3]-left[1]-left[3])/2) < 4]
+            if len(right) == 1:
+                name_labels.append((left[0],left[1],right[0][2],left[3],'名称'))
+        labels = [w for w in name_labels
+                  if 0 < w[0]-marker[0] < 80 and abs(w[1]-marker[1]) < 20]
         if len(labels) != 1: return {}
         label = labels[0]
-        values = [w for w in words if 0 < w[0]-label[0] < 70 and abs(w[1]-label[1]) < 5]
+        values = [w for w in words if -10 <= w[0]-label[2] < 70
+                  and abs((w[1]+w[3]-label[1]-label[3])/2) < 4]
         if len(values) != 1 or not re.search(r'[\u4e00-\u9fff]', values[0][4]): return {}
         name = values[0][4].strip()
         if not 2 <= len(name) <= 100: return {}
@@ -89,6 +97,14 @@ def _side_by_side_names(page):
     if positions[0][0] >= positions[1][0] or abs(positions[0][1]-positions[1][1]) > 10 or names['buyer'] == names['seller']:
         return {}
     return names
+
+
+def _positioned_issue_dates(page):
+    words = page.get_text('words')
+    labels = [word for word in words if re.sub(r'[\s:：]', '', word[4]) in ('开票日期','开具日期')]
+    return {_calendar_date(word[4]) for label in labels for word in words
+            if 0 <= word[0]-label[2] < 100
+            and abs((word[1]+word[3]-label[1]-label[3])/2) < 4 and _calendar_date(word[4])}
 
 
 def _deskew(image):
@@ -169,10 +185,13 @@ def recognize_pdf(pdf):
     fields, reason = parse_invoice('\n'.join(page.get_text() for page in pages))
     sorted_text = '\n'.join(page.get_text(sort=True) for page in pages)
     sorted_fields, sorted_reason = parse_invoice(sorted_text)
+    positioned_dates = set().union(*(_positioned_issue_dates(page) for page in pages))
     if ('开票日期存在不同值' in reason or '开票日期存在不同值' in sorted_reason
-            or fields.get('invoice_date') and sorted_fields.get('invoice_date') and fields['invoice_date'] != sorted_fields['invoice_date']):
+            or len(positioned_dates | {f['invoice_date'] for f in (fields, sorted_fields) if f.get('invoice_date')}) > 1):
         fields['invoice_date'] = ''
         return fields, '开票日期存在不同值，请人工核对'
+    if positioned_dates and not sorted_fields.get('invoice_date'):
+        sorted_fields['invoice_date'] = next(iter(positioned_dates))
     if not reason and page_count>100:
         return fields, '仅检查前 100 页，请人工核对其余页面'
     if not reason:
@@ -233,7 +252,7 @@ def parse_xml_invoice(root):
     aliases = {
         'buyer': {'gmfmc', 'buyername', 'buyer_name', 'purchaser', '购买方名称'},
         'seller': {'xfmc', 'xsfmc', 'sellername', 'seller_name', 'seller', '销售方名称'},
-        'amount_cents': {'jshj', 'totaltaxincludedamount', 'taxinclusivetotalamount', 'total_amount', '价税合计'},
+        'amount_cents': {'jshj', 'totaltaxincludedamount', 'totaltax-includedamount', 'taxinclusivetotalamount', 'total_amount', '价税合计'},
         'invoice_date': {'kprq', 'issuedate', 'issue_date', 'invoicedate', 'invoice_date', 'issuetime', '开票日期'},
         'subtotal': {'hjje', 'totalamwithouttax', 'taxexclusivetotalamount'},
         'tax': {'hjse', 'totaltaxam', 'taxtotalamount'},
@@ -241,7 +260,17 @@ def parse_xml_invoice(root):
     }
     found = {}
     date_values = []
-    for node in root.iter():
+    def invoice_nodes(node):
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if not isinstance(current.tag, str): continue
+            if current.tag.split('}')[-1].lower() in ('issuiteminformation', 'invoiceline', 'item', 'lineitem', 'lineitems'):
+                continue
+            yield current
+            pending.extend(reversed(current))
+
+    for node in invoice_nodes(root):
         if not isinstance(node.tag, str): continue
         name = node.tag.split('}')[-1].lower()
         text = (node.text or '').strip()
