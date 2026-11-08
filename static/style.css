@@ -82,6 +82,26 @@ input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--ink);fle
 .failed-invoice .muted,.account-row .muted{margin-top:6px}
 .account-row{grid-template-columns:minmax(100px,.65fr) minmax(0,1fr) auto}
 .account-row .actions{justify-content:flex-end}
+.notification-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,1.3fr) auto;align-items:start;gap:24px;padding:24px 0;border-bottom:1px solid var(--line)}
+.notification-row:last-child{border-bottom:0}
+.notification-identity,.notification-delivery{display:grid;align-content:start;gap:4px;min-width:0;overflow-wrap:anywhere}
+.notification-identity strong,.notification-delivery>[role=status]{font-size:14px;line-height:22px;font-weight:500}
+.notification-identity>span,.notification-delivery time{font-size:12px;line-height:20px;color:var(--muted)}
+.notification-actions{display:flex;align-self:center;align-items:center;justify-content:flex-end;gap:8px}
+.notification-actions .button{min-height:40px;text-align:center;white-space:nowrap}
+.notification-form-fields{display:grid;gap:20px}
+.notification-form-fields .fields{align-items:start}
+.notification-form-fields .field input,.notification-form-fields .field select{height:44px}
+.notification-form-fields .hint{margin:0}
+@media(min-width:641px) and (max-width:1120px){
+  .notification-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px 24px}
+  .notification-actions{grid-column:1/-1;justify-content:flex-start}
+}
+@media(max-width:640px){
+  .notification-row{grid-template-columns:minmax(0,1fr);gap:16px;padding:20px 0}
+  .notification-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .notification-actions .button{min-height:44px;padding-inline:8px}
+}
 .email-filters{display:flex;gap:18px;flex-wrap:wrap;padding:16px 20px;background:var(--surface);border:1px solid var(--line);border-radius:20px}
 .email-filter-field{display:flex;align-items:center;gap:9px;min-width:0;max-width:100%}.email-filters label{flex:none;font-size:12px;color:var(--muted)}
 .email-select{position:relative;display:block;width:fit-content;min-width:0;max-width:100%}

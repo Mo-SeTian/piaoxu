@@ -437,13 +437,16 @@ function notificationsPage(){
     '<button type="button" class="button primary" data-push-action="add">'+uiIcon('plus')+'添加渠道</button>');
   const rows = state.notifications.map(channel=>{
     const when = channel.last_attempt_at ? new Date(channel.last_attempt_at).toLocaleString('zh-CN') : '';
-    return `<div class="row account-row">
-      <strong>${esc(channel.name)}</strong>
-      <div>${esc(pushPlatforms[channel.provider])} · ${channel.enabled?'已启用':'已停用'}
-        <div class="muted" role="status" data-push-result="${channel.id}">${channel.last_result?
-          esc(when+' · '+channel.last_result):'尚未发送'}</div>
+    return `<div class="notification-row">
+      <div class="notification-identity">
+        <strong>${esc(channel.name)}</strong>
+        <span>${esc(pushPlatforms[channel.provider])} · ${channel.enabled?'已启用':'已停用'}</span>
       </div>
-      <div class="actions">
+      <div class="notification-delivery">
+        <span role="status" data-push-result="${channel.id}">${esc(channel.last_result || '尚未发送')}</span>
+        ${when?`<time datetime="${esc(channel.last_attempt_at)}">${esc(when)}</time>`:''}
+      </div>
+      <div class="notification-actions">
         <button class="button" type="button" data-push-action="test" data-id="${channel.id}">发送测试</button>
         <button class="button" type="button" data-push-action="edit" data-id="${channel.id}">编辑</button>
         <button class="button danger" type="button" data-push-action="delete" data-id="${channel.id}">删除</button>
@@ -468,6 +471,7 @@ function editNotification(channel){
   const selection = Object.entries(pushPlatforms).map(([key,label])=>
     `<option value="${key}" ${key===provider?'selected':''}>${label}</option>`).join('');
   openDialog(channel?'编辑通知渠道':'添加通知渠道',`
+    <div class="notification-form-fields">
     <div class="fields">
       <label class="field">渠道名称<input name="name" required maxlength="80" value="${esc(channel?.name)}" placeholder="例如：我的微信"></label>
       <label class="field">推送平台<select name="provider" ${channel?'disabled':''}>${selection}</select></label>
@@ -490,6 +494,7 @@ function editNotification(channel){
       </label>
     </div></div>
     <div data-push-provider="serverchan" hidden><p class="hint">支持 Server酱 Turbo 和 Server酱³ 的 SendKey。</p></div>
+    </div>
     <div class="check-list"><label><input type="checkbox" name="enabled" ${channel?.enabled===false?'':'checked'}> 启用自动通知</label></div>
   `,'保存渠道');
   form.dataset.submit='notification-save';
