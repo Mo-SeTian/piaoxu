@@ -106,7 +106,10 @@ test('merge captures both record identities and blocks double submission',async(
 test('merge shows conflicts and keeps the dialog usable after a failed request',async()=>{
   const h=mergeHarness();h.context.state.invoices[1].amount_cents=2190;h.context.showMergeDialog(2);
   assert.equal(h.submit.disabled,true);assert.match(h.context.body,/merge-conflict/);
-  h.context.state.invoices[1].amount_cents=1690;h.context.showMergeDialog(2);
+  h.context.state.invoices[1].amount_cents=1690;
+  h.context.state.invoices[0].buyer_tax_id='T'.repeat(18);h.context.state.invoices[1].buyer_tax_id='S'.repeat(18);h.context.showMergeDialog(2);
+  assert.equal(h.submit.disabled,true);assert.match(h.context.body,/购买方税号/);
+  h.context.state.invoices[1].buyer_tax_id='T'.repeat(18);h.context.showMergeDialog(2);
   h.context.api=async()=>{throw Error('发票已发生变化')};
   await assert.rejects(h.context.submitInvoiceMerge(),/发票已发生变化/);
   assert.equal(h.submit.disabled,false);assert.ok(h.context.pendingMerge);assert.equal(h.context.form.dataset.uploading,undefined);

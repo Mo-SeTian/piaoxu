@@ -27,7 +27,7 @@ from .recognition import recognize
 from .formats import validate
 from .email_html import proxy_html_images
 from .download import public_image
-from .service import DUPLICATE_REASON, UNVERIFIED_REASON, assist, cipher, duplicate_invoice, duplicate_reason, export_filename, import_file, now
+from .service import DUPLICATE_REASON, UNVERIFIED_REASON, assist, cipher, duplicate_invoice, duplicate_reason, export_filename, fill_tax_ids, import_file, now
 from .ai import save_settings as save_ai_settings, settings as get_ai_settings
 from . import ai
 from .backup import create_backup, inspect_backup, recover_interrupted_restore, restore_backup
@@ -420,6 +420,9 @@ def update_invoice(invoice_id: int, value: InvoiceUpdate):
         if duplicate: reason = duplicate_reason(reason)
         if duplicate_state=='unverified': reason = (reason + '；' if reason else '') + UNVERIFIED_REASON
         db.execute('UPDATE invoices SET buyer=?,seller=?,amount_cents=?,invoice_date=?,invoice_number=?,export_name=?,recognition_status=?,failure_reason=?,duplicate_of=?,duplicate_state=? WHERE id=?', (value.buyer.strip(),value.seller.strip(),value.amount_cents,value.invoice_date.isoformat() if value.invoice_date else '',value.invoice_number.strip(),value.export_name.strip(),'识别失败' if reason else '已识别',reason,duplicate['id'] if duplicate else None,duplicate_state,invoice_id))
+        for key, name in (('buyer_tax_id','buyer'),('seller_tax_id','seller')):
+            if row[name] != getattr(value,name).strip():
+                db.execute(f"UPDATE invoices SET {key}='' WHERE id=?",(invoice_id,))
         refresh_email_status(db, invoice_id)
         if row['invoice_number'] != value.invoice_number.strip():
             affected = db.execute('SELECT * FROM invoices WHERE duplicate_of=?', (invoice_id,)).fetchall()
@@ -448,7 +451,7 @@ def merge_invoice(invoice_id: int, value: MergeInvoice):
             raise HTTPException(409,'请先处理本张发票的报销组、报销标记或自定义名称后再合并')
         if not source['invoice_number'] or source['invoice_number'] != target['invoice_number']:
             raise HTTPException(409,'发票号码不一致，无法合并')
-        for key in ('buyer','seller','amount_cents','invoice_date'):
+        for key in ('buyer','seller','amount_cents','invoice_date','buyer_tax_id','seller_tax_id'):
             if source[key] not in (None,'') and target[key] not in (None,'') and source[key] != target[key]:
                 raise HTTPException(409,'发票关键信息不一致，请核对或重新识别后再合并')
         merge_records(db, source, target)
@@ -495,7 +498,7 @@ def recognition_attempt(invoice_id):
 def check_invoice_unchanged(db, invoice_id, before):
     db.execute('BEGIN IMMEDIATE')
     latest = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
-    keys = ('buyer','seller','amount_cents','invoice_date','invoice_number','recognition_status','failure_reason','ai_suggestion','duplicate_of','duplicate_state')
+    keys = ('buyer','seller','buyer_tax_id','seller_tax_id','amount_cents','invoice_date','invoice_number','recognition_status','failure_reason','ai_suggestion','duplicate_of','duplicate_state')
     if not latest or latest['reimbursed'] or any(latest[k] != before[k] for k in keys):
         raise HTTPException(409,'识别期间发票已发生变更，未覆盖现有内容')
 
@@ -510,6 +513,7 @@ def retry(invoice_id: int):
         fields, reason, suggestion = assist(FILES / row['stored_name'], fields, reason)
         with connect() as db:
             check_invoice_unchanged(db, invoice_id, row)
+            fill_tax_ids(db, invoice_id, fields)
             number = row['invoice_number'] or fields.get('invoice_number','')
             duplicate,duplicate_state = duplicate_for_update(db,row,number)
             if duplicate: reason = duplicate_reason(reason)
@@ -526,7 +530,7 @@ def ai_invoice(invoice_id: int):
         if not row: raise HTTPException(404,'发票不存在')
         if row['reimbursed']: raise HTTPException(409,'已报销发票不能重新识别')
         before = dict(row)
-        current = {key: before[key] for key in ('buyer','seller','amount_cents','invoice_date','invoice_number')}
+        current = {key: before[key] for key in ('buyer','seller','buyer_tax_id','seller_tax_id','amount_cents','invoice_date','invoice_number')}
         try:
             fields, reason, suggestion = assist(FILES / row['stored_name'], current, before['failure_reason'], force=True)
         except ValueError as exc:
@@ -535,6 +539,7 @@ def ai_invoice(invoice_id: int):
             raise HTTPException(502,'AI 辅助失败，请检查模型配置后重试') from None
         with connect() as db:
             check_invoice_unchanged(db, invoice_id, before)
+            fill_tax_ids(db, invoice_id, fields)
             duplicate,duplicate_state = duplicate_for_update(db,before,fields.get('invoice_number',''))
             if duplicate: reason = duplicate_reason(reason)
             if duplicate_state=='unverified': reason = (reason + '；' if reason else '') + UNVERIFIED_REASON

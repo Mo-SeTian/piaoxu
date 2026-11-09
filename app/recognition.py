@@ -24,6 +24,11 @@ def _calendar_date(value):
     except ValueError: return ''
 
 
+def normalize_tax_id(value):
+    value = re.sub(r'\s+', '', value or '').upper()
+    return value if re.fullmatch(r'[0-9A-Z]{15,20}', value) else ''
+
+
 def parse_invoice(text):
     compact = re.sub(r'[ \t]+', '', text)
     is_invoice = bool(re.search(r'发票|电子客票', compact))
@@ -53,6 +58,9 @@ def parse_invoice(text):
     except InvalidOperation:
         cents = None
     fields = {'buyer': buyer, 'seller': seller, 'amount_cents': cents, 'invoice_date': date, 'invoice_number': number}
+    for key, party, other in (('buyer_tax_id','购买方|购方','销售方|销方'), ('seller_tax_id','销售方|销方','购买方|购方')):
+        value = _field(compact, [rf'(?:{party})(?:(?!(?:{other}))[\s\S]){{0,250}}?(?:统一社会信用代码(?:/纳税人识别号)?|纳税人识别号|税号)[：:]?\s*([0-9A-Z]{{15,20}})(?![0-9A-Z])'])
+        if normalize_tax_id(value): fields[key] = normalize_tax_id(value)
     missing = [label for k, label in [('buyer','抬头'),('seller','销售方'),('amount_cents','金额'),('invoice_date','开票日期')] if fields[k] is None or fields[k] == '']
     reason = '' if is_invoice and not missing else ('未确认是发票；' if not is_invoice else '') + ('未识别：' + '、'.join(missing) if missing else '')
     if buyer and seller and buyer == seller:
@@ -93,6 +101,13 @@ def _side_by_side_names(page):
         name = values[0][4].strip()
         if not 2 <= len(name) <= 100: return {}
         names[key] = name
+        tax_labels = [w for w in words if '纳税人识别号' in w[4] or '统一社会信用代码' in w[4]]
+        tax_labels = [w for w in tax_labels if 0 < w[0]-marker[0] < 80 and 0 < w[1]-label[1] < 65]
+        if len(tax_labels) == 1:
+            tax_label = tax_labels[0]
+            taxes = [normalize_tax_id(w[4]) for w in words if normalize_tax_id(w[4])
+                     and -5 <= w[0]-tax_label[2] < 80 and abs((w[1]+w[3]-tax_label[1]-tax_label[3])/2) < 4]
+            if len(taxes) == 1: names[key+'_tax_id'] = taxes[0]
         positions.append(marker)
     if positions[0][0] >= positions[1][0] or abs(positions[0][1]-positions[1][1]) > 10 or names['buyer'] == names['seller']:
         return {}
@@ -160,6 +175,9 @@ def _recognize_images(images, fields=None, reason='未识别到发票内容', de
         if incomplete: break
     if best_is_ocr:
         result = dict(best[0])
+        for key in ('buyer_tax_id','seller_tax_id'):
+            values = {r[key] for r in readings if r.get(key)}
+            if values: result[key] = next(iter(values)) if len(values)==1 else ''
         uncertain = []
         for key in keys:
             values = [r[key] for r in readings if r.get(key) not in (None,'')]
@@ -185,6 +203,11 @@ def recognize_pdf(pdf):
     fields, reason = parse_invoice('\n'.join(page.get_text() for page in pages))
     sorted_text = '\n'.join(page.get_text(sort=True) for page in pages)
     sorted_fields, sorted_reason = parse_invoice(sorted_text)
+    names = _side_by_side_names(pages[0]) if pages else {}
+    for key in ('buyer_tax_id','seller_tax_id'):
+        values = {source[key] for source in (fields, sorted_fields, names) if source.get(key)}
+        if values:
+            fields[key] = sorted_fields[key] = next(iter(values)) if len(values)==1 else ''
     positioned_dates = set().union(*(_positioned_issue_dates(page) for page in pages))
     if ('开票日期存在不同值' in reason or '开票日期存在不同值' in sorted_reason
             or len(positioned_dates | {f['invoice_date'] for f in (fields, sorted_fields) if f.get('invoice_date')}) > 1):
@@ -196,11 +219,10 @@ def recognize_pdf(pdf):
         return fields, '仅检查前 100 页，请人工核对其余页面'
     if not reason:
         return fields, reason
-    names = _side_by_side_names(pages[0]) if pages else {}
     if names and all(sorted_fields.get(key) for key in ('invoice_number','invoice_date')) and sorted_fields.get('amount_cents') is not None:
-        if any(sorted_fields.get(key) and sorted_fields[key] != value for key,value in names.items()):
+        if any(sorted_fields.get(key) and sorted_fields[key] != names[key] for key in ('buyer','seller')):
             return sorted_fields, '购买方或销售方解析结果不一致，请人工核对'
-        sorted_fields.update(names)
+        sorted_fields.update({key:names[key] for key in ('buyer','seller')})
         if '发票' in sorted_text:
             return sorted_fields, '仅检查前 100 页，请人工核对其余页面' if page_count>100 else ''
     if _field_score(sorted_fields) > _field_score(fields):
@@ -252,6 +274,8 @@ def parse_xml_invoice(root):
     aliases = {
         'buyer': {'gmfmc', 'buyername', 'buyer_name', 'purchaser', '购买方名称'},
         'seller': {'xfmc', 'xsfmc', 'sellername', 'seller_name', 'seller', '销售方名称'},
+        'buyer_tax_id': {'gmfnsrsbh', 'buyeridnum', 'buyertaxid', 'buyertaxno', 'buyer_tax_id', 'buyertaxpayerid', '购买方税号'},
+        'seller_tax_id': {'xsfnsrsbh', 'xfnsrsbh', 'selleridnum', 'sellertaxid', 'sellertaxno', 'seller_tax_id', 'sellertaxpayerid', '销售方税号'},
         'amount_cents': {'jshj', 'totaltaxincludedamount', 'totaltax-includedamount', 'taxinclusivetotalamount', 'total_amount', '价税合计'},
         'invoice_date': {'kprq', 'issuedate', 'issue_date', 'invoicedate', 'invoice_date', 'issuetime', '开票日期'},
         'subtotal': {'hjje', 'totalamwithouttax', 'taxexclusivetotalamount'},
@@ -260,6 +284,7 @@ def parse_xml_invoice(root):
     }
     found = {}
     date_values = []
+    tax_ids = {}
     def invoice_nodes(node):
         pending = [node]
         while pending:
@@ -277,6 +302,8 @@ def parse_xml_invoice(root):
         for key, names in aliases.items():
             if key == 'invoice_date' and name in names and text:
                 date_values.append(text)
+            if key in ('buyer_tax_id','seller_tax_id') and name in names and text:
+                tax_ids.setdefault(key, set()).add(normalize_tax_id(text))
             if name in names and text and key not in found:
                 found[key] = text
     value = found.get('amount_cents', '').replace(',', '').replace('¥','').replace('￥','').strip()
@@ -287,6 +314,8 @@ def parse_xml_invoice(root):
     except InvalidOperation:
         found['amount_cents'] = None
     dates = {_calendar_date(value) for value in date_values}
+    for key, values in tax_ids.items():
+        found[key] = next(iter(values)) if len(values)==1 else ''
     found['invoice_date'] = next(iter(dates)) if len(dates) == 1 and '' not in dates else ''
     mismatch = False
     if found.get('subtotal') and found.get('tax') and found.get('amount_cents') is not None:
@@ -355,7 +384,7 @@ def recognize_ofd(path):
             for name, root in roots.items():
                 _resolve_ofd_tags(root, name, objects)
                 fields, reason = parse_xml_invoice(root)
-                if len([v for v in fields.values() if v not in (None,'')]) > len([v for v in best[0].values() if v not in (None,'')]): best = (fields,reason)
+                if _field_score(fields) > _field_score(best[0]): best = (fields,reason)
                 for node in root.iter():
                     if isinstance(node.tag,str) and node.tag.split('}')[-1] == 'TextCode' and node.text:
                         text.append(node.text)
@@ -363,7 +392,7 @@ def recognize_ofd(path):
             if text:
                 parsed = parse_invoice('\n'.join(text))
                 if not parsed[1]: return parsed
-                if len([v for v in parsed[0].values() if v not in (None,'')]) > len([v for v in best[0].values() if v not in (None,'')]): return parsed
+                if _field_score(parsed[0]) > _field_score(best[0]): return parsed
             return best
     except (ValueError,OSError):
         return {}, 'OFD 无法读取或文件已损坏'

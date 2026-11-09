@@ -146,7 +146,7 @@ def refresh_native_mail_invoices(email_id):
     """Reparse untouched AI-assisted mail imports before reconciling their formats."""
     from .db import FILES
     from .recognition import recognize
-    from .service import duplicate_invoice, UNVERIFIED_REASON
+    from .service import duplicate_invoice, fill_tax_ids, UNVERIFIED_REASON
     with connect() as db:
         rows = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
             WHERE ie.email_id=? AND i.recognition_status='识别失败' AND i.ai_suggestion<>'{}'
@@ -172,6 +172,7 @@ def refresh_native_mail_invoices(email_id):
                        (*[fields[key] for key in keys], '识别失败' if duplicate else '已识别',
                         DUPLICATE_REASON if duplicate else '', duplicate['id'] if duplicate else None,
                         'pending' if duplicate else '', row['id']))
+            fill_tax_ids(db, row['id'], fields)
 
 
 def process_message(mail, account_id, uid, namespace, folder, old=None, force=False):
@@ -245,12 +246,12 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
         db.execute('UPDATE emails SET status=? WHERE id=?',(state,email_id))
         if not force:
             fresh = [row for row in statuses if row['id'] in created_ids]
-            recognized = sum(row['recognition_status'] == '已识别' for row in fresh)
+            recognized = [row['id'] for row in fresh if row['recognition_status'] == '已识别']
             if recognized:
                 queue_notification(db, email_id, 'received', recognized)
             if (any(row['recognition_status'] == '识别失败' for row in fresh)
                     or (state in ('导入失败', '发票链接待处理') and (invoice_hint or attachments or links))):
-                queue_notification(db, email_id, 'failed', 0)
+                queue_notification(db, email_id, 'failed', [row['id'] for row in fresh if row['recognition_status']=='识别失败'])
     return {'email_id':email_id,'created_ids':sorted(created_ids),'existing_ids':sorted(existing_ids),'files_found':len(attachments),'links_found':len(links),'errors':len(errors),'status':state}
 
 def sync_folder(mail, account_id, token, folder):

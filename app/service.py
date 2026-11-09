@@ -65,6 +65,10 @@ def assist(path, fields, reason, force=False):
         suggestion = recognize_ai(path, config)
         combined = dict(fields)
         for key, value in suggestion.items():
+            if key in ('buyer_tax_id','seller_tax_id'):
+                party = key.removesuffix('_tax_id')
+                if suggestion.get(party) and combined.get(party) and suggestion[party] != combined[party]:
+                    continue
             if combined.get(key) in (None, '') and value not in (None, ''):
                 combined[key] = value
         return combined, 'AI 建议已生成，请人工核对', suggestion
@@ -122,8 +126,19 @@ def matching_mail_original(invoice, fields, reason, ext):
     required = ('invoice_number', 'amount_cents')
     if any(fields.get(key) in (None, '') or invoice[key] != fields[key] for key in required):
         return False
-    return all(fields.get(key) in (None, '') or invoice[key] == fields[key]
-               for key in ('buyer', 'seller', 'invoice_date'))
+    return (all(fields.get(key) in (None, '') or invoice[key] == fields[key]
+                for key in ('buyer', 'seller', 'invoice_date'))
+            and all(not fields.get(key) or not invoice[key] or invoice[key] == fields[key]
+                    for key in ('buyer_tax_id','seller_tax_id')))
+
+
+def fill_tax_ids(db, invoice_id, fields):
+    from .recognition import normalize_tax_id
+    for key, party in (('buyer_tax_id','buyer'),('seller_tax_id','seller')):
+        value = normalize_tax_id(fields.get(key))
+        if value:
+            db.execute(f"UPDATE invoices SET {key}=? WHERE id=? AND {key}='' AND ({party}='' OR {party}=?)",
+                       (value,invoice_id,fields.get(party) or ''))
 
 
 def _import_file_locked(name, content, source, email_id, ext, digest):
@@ -155,6 +170,7 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
                 if len(matches) == 1:
                     db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
                                (matches[0]['id'],digest,Path(name).name[:255],stored))
+                    fill_tax_ids(db, matches[0]['id'], fields)
                     return matches[0]['id'], False
             duplicate = duplicate_invoice(db,number)
             if duplicate: reason = duplicate_reason(reason)
@@ -163,6 +179,7 @@ def _import_file_locked(name, content, source, email_id, ext, digest):
             db.execute('''INSERT OR IGNORE INTO invoices(sha256,original_name,stored_name,source,email_id,imported_at,buyer,seller,amount_cents,invoice_date,invoice_number,recognition_status,failure_reason,ai_suggestion,duplicate_of,duplicate_state)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (digest, Path(name).name[:255],stored,source,email_id,now(),fields.get('buyer',''),fields.get('seller',''),fields.get('amount_cents'),fields.get('invoice_date',''),number,'识别失败' if reason else '已识别',reason,json.dumps(suggestion,ensure_ascii=False),duplicate['id'] if duplicate else None,'pending' if duplicate else 'unverified' if unverified else ''))
             result = db.execute('SELECT id FROM invoices WHERE sha256=?', (digest,)).fetchone()
+            fill_tax_ids(db, result['id'], fields)
             if source == '本地上传':
                 db.execute('UPDATE invoices SET has_local_upload=1 WHERE id=?', (result['id'],))
             if email_id is not None:

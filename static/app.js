@@ -147,7 +147,7 @@ function showDeleteDialog(ids){
 function showMergeDialog(id){
   const source=state.invoices.find(item=>item.id===id),target=state.invoices.find(item=>item.id===source?.duplicate_of);
   if(!source||!target){toast('未找到对应发票，请刷新后重试');return}
-  const fields=[['buyer','发票抬头'],['seller','消费商户'],['amount_cents','金额'],['invoice_date','开票日期'],['invoice_number','发票号码']];
+  const fields=[['buyer','发票抬头'],['buyer_tax_id','购买方税号'],['seller','消费商户'],['seller_tax_id','销售方税号'],['amount_cents','金额'],['invoice_date','开票日期'],['invoice_number','发票号码']];
   const conflicts=fields.filter(([key])=>source[key]!=null&&source[key]!==''&&target[key]!=null&&target[key]!==''&&source[key]!==target[key]);
   const card=(item,title)=>`<section><h3>${title}</h3><p>${esc(item.original_name)}</p><dl>${fields.map(([key,label])=>`<div${conflicts.some(([name])=>name===key)?' class="merge-conflict"':''}><dt>${label}</dt><dd>${key==='amount_cents'?cash(item[key]):esc(item[key]||'未识别')}</dd></div>`).join('')}</dl><a class="button" href="/api/invoices/${item.id}/original" target="_blank" rel="noopener">查看原件</a></section>`;
   openDialog('合并到已有发票',`<p class="sub">两张记录的全部原件和来源邮件将归到已有发票，报销只计一张。合并后保留已有发票的信息。</p><div class="merge-comparison">${card(source,'待合并的发票')}${card(target,'保留的已有发票')}</div>${conflicts.length?'<p class="hint">关键信息存在差异，请先核对并重新识别或人工补充，再进行合并。</p>':''}`,'确认合并');
@@ -478,7 +478,7 @@ function notificationsPage(){
   }).join('');
   return heading+`<div class="section-head"><h2>通知渠道 <span class="muted">${state.notifications.length} 个</span></h2></div>
     <div class="box list-box">${rows||empty('还没有通知渠道。添加后可发送测试消息。')}</div>
-    <p class="hint">每封邮件按结果汇总通知。消息仅包含结果和数量，推送凭证加密保存在本地。</p>`;
+    <p class="hint">每封邮件按结果汇总通知，附公司名称、税号、含税金额、日期和票号；未识别字段会注明。推送凭证加密保存在本地。</p>`;
 }
 
 function updateNotificationFields(provider){

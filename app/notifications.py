@@ -1,4 +1,4 @@
-"""Deliver minimal invoice notifications through configured push platforms."""
+"""Deliver invoice summaries through configured push platforms."""
 import hashlib
 import http.client
 import json
@@ -203,7 +203,9 @@ def _send(row, title, message):
             host, path = 'sctapi.ftqq.com', f'/{secret}.send'
         else:
             raise PushError('Server酱 SendKey 格式不正确')
-        _check_code(_request_json(host, path, form={'title':title,'desp':message}), 'code', 0)
+        # Invoice fields are plain text; do not turn a merchant name into Markdown links or HTML.
+        description = '\n\n'.join(re.sub(r'([\\`*_{}\[\]<>#!|])', r'\\\1', line) for line in message.splitlines())
+        _check_code(_request_json(host, path, form={'title':title,'desp':description}), 'code', 0)
 
 
 def _deliver(row, title, message):
@@ -226,18 +228,55 @@ def test_channel(channel_id):
         row = db.execute('SELECT * FROM notification_channels WHERE id=?',(channel_id,)).fetchone()
     if row is None:
         raise LookupError
-    return _deliver(row, '票序 · 测试通知', '这是一条测试消息。收到后即可确认渠道可用。')
+    sample = {'buyer':'示例购买方公司','buyer_tax_id':'T'*18,'seller':'示例销售方公司',
+              'seller_tax_id':'S'*18,'amount_cents':12345,'invoice_date':'2026-01-15','invoice_number':'12345678901234567890'}
+    message = '这是一条测试消息。以下为虚拟发票示例，非真实发票。\n\n' + _invoice_detail(sample, 1)
+    return _deliver(row, '票序 · 测试通知', message)
 
 
-def queue_notification(db, email_id, event, count):
-    db.execute('''INSERT OR IGNORE INTO notification_deliveries(email_id,channel_id,event,invoice_count)
-        SELECT ?,id,?,? FROM notification_channels WHERE enabled=1''', (email_id,event,count))
+def _invoice_detail(item, index):
+    def text(key):
+        value = ' '.join(re.sub(r'[\x00-\x1f\x7f]', ' ', str(item.get(key) or '')).split())
+        return (value[:120] + ('…' if len(value)>120 else '')) or '未识别'
+    amount = item.get('amount_cents')
+    amount = f'¥{amount//100:,}.{amount%100:02d}' if type(amount) is int and amount>=0 else '未识别'
+    return (f'发票 {index}\n购买方：{text("buyer")}\n购买方税号：{text("buyer_tax_id")}\n'
+            f'销售方：{text("seller")}\n销售方税号：{text("seller_tax_id")}\n'
+            f'含税金额：{amount}\n开票日期：{text("invoice_date")}\n发票号码：{text("invoice_number")}')
+
+
+def _message(event, count, details, byte_limit):
+    if event=='received':
+        header, footer = f'新增 {count} 张已识别发票。', '请到票序发票库查看。'
+    else:
+        header = f'{count} 张发票自动识别失败。' if count else '邮件中的附件或链接处理失败，尚未提取到发票信息。'
+        footer = '以上信息待核对，请到票序「识别失败」查看。'
+    blocks = []
+    for index, item in enumerate(details, 1):
+        block = _invoice_detail(item, index)
+        remaining = f'其余 {len(details)-index} 张明细请到票序查看。'
+        if len('\n\n'.join([header,*blocks,block,remaining,footer]).encode('utf-8')) > byte_limit:
+            break
+        blocks.append(block)
+    if len(blocks)<len(details): blocks.append(f'其余 {len(details)-len(blocks)} 张明细请到票序查看。')
+    return '\n\n'.join([header,*blocks,footer])
+
+
+def queue_notification(db, email_id, event, invoice_ids):
+    details = []
+    if invoice_ids:
+        columns = 'buyer,seller,buyer_tax_id,seller_tax_id,amount_cents,invoice_date,invoice_number'
+        details = [dict(row) for row in db.execute(f'''SELECT {columns} FROM invoices
+            WHERE id IN ({','.join('?'*len(invoice_ids))}) ORDER BY id''', invoice_ids)]
+    db.execute('''INSERT OR IGNORE INTO notification_deliveries(email_id,channel_id,event,invoice_count,details)
+        SELECT ?,id,?,?,? FROM notification_channels WHERE enabled=1''',
+               (email_id,event,len(details),json.dumps(details,ensure_ascii=False)))
 
 
 def deliver_next():
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
-        row = db.execute('''SELECT c.*,d.id AS delivery_id,d.event,d.invoice_count
+        row = db.execute('''SELECT c.*,d.id AS delivery_id,d.event,d.invoice_count,d.details
             FROM notification_deliveries d JOIN notification_channels c ON c.id=d.channel_id
             WHERE d.pending=1 AND c.enabled=1 ORDER BY d.id LIMIT 1''').fetchone()
         if row is None:
@@ -249,9 +288,9 @@ def deliver_next():
                    ('发送结果待确认',now(),row['id']))
     if row['event'] == 'received':
         title = '票序 · 收到新发票'
-        message = f"邮箱新增 {row['invoice_count']} 张已识别的发票，请到票序发票库查看。"
     else:
         title = '票序 · 发票自动识别失败'
-        message = '一封邮件中的发票未能自动处理，请到票序「识别失败」查看。'
+    limit = 2048-len((title+'\n').encode('utf-8')) if row['provider']=='wecom' else 30000
+    message = _message(row['event'],row['invoice_count'],json.loads(row['details']),limit)
     _deliver(row, title, message)
     return True
