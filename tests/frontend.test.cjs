@@ -4,6 +4,32 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)))}
+function exportHarness(){
+  const controls=[{disabled:false},{disabled:true}],link={clicks:0,click(){this.clicks++}},done={},messages=[],calls=[];
+  const context=vm.createContext({exporting:false,state:{selected:new Set([1,2])},
+    document:{querySelectorAll:()=>controls},form:{dataset:{submit:'old'},querySelector:s=>s==='[data-export-download]'?link:done},
+    toast:message=>messages.push(message),uiIcon:()=>'',openDialog:(title,html)=>{context.html=html},
+    api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({download_id:'a'.repeat(48)})}}});
+  vm.runInContext(section('async function exportInvoices(', '\nasync function action('),context);
+  return {context,controls,link,done,messages,calls};
+}
+test('invoice export uses a native HTTP download and keeps a retry link',async()=>{
+  const h=exportHarness();await h.context.exportInvoices(true);
+  assert.equal(h.calls[0].url,'/api/invoices/export/prepare');assert.equal(h.calls[0].payload.pdf_only,true);
+  assert.deepEqual(h.calls[0].payload.ids,[1,2]);
+  assert.match(h.context.html,/href="\/api\/invoices\/export\/download\/[a-f0-9]{48}" download="invoices.zip"/);
+  assert.equal(h.link.clicks,1);assert.equal(h.done.textContent,'完成');
+  assert.equal(h.context.exporting,false);assert.equal(h.controls[0].disabled,false);assert.equal(h.controls[1].disabled,true);
+});
+test('export blocks repeat requests and recovers after a failed preparation',async()=>{
+  const h=exportHarness();let reject,calls=0;
+  h.context.api=()=>{calls++;return new Promise((resolve,fail)=>reject=fail)};
+  const first=h.context.exportInvoices();await h.context.exportInvoices();
+  assert.equal(calls,1);assert.equal(h.controls[0].disabled,true);
+  reject(Error('打包失败'));await assert.rejects(first,/打包失败/);
+  assert.equal(h.context.exporting,false);assert.equal(h.controls[0].disabled,false);assert.equal(h.link.clicks,0);
+  assert.equal(h.context.state.selected.size,2);
+});
 function previewHarness(expanded=true){
   const image={style:{}},previous={},next={},label={},scale={},scroll={calls:0,scrollTo(){this.calls++}};
   const viewer={dataset:{pdfViewer:'9',pdfCurrent:'1',pdfTotal:'2',previewScale:'100'},

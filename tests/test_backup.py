@@ -49,6 +49,66 @@ def invoice_xml(number):
     return f'<Invoice><Fphm>{number}</Fphm><Kprq>2026-10-15</Kprq><Gmfmc>示例购买方</Gmfmc><Xsfmc>示例销售方</Xsfmc><Jshj>200.35</Jshj></Invoice>'.encode()
 
 
+def test_native_export_download_supports_ranges_and_requires_the_same_session(isolated_storage):
+    from app.main import app
+    config,data,client,db,service,backup=isolated_storage
+    content=invoice_xml('99000000000000000001')
+    item=client.post('/api/invoices/upload',files={'files':('invoice.xml',content,'application/xml')}).json()[0]
+    prepared=client.post('/api/invoices/export/prepare',json={'ids':[item['id']]})
+    assert prepared.status_code==200
+    url='/api/invoices/export/download/'+prepared.json()['download_id']
+    browser=TestClient(app,cookies=client.cookies)
+    response=browser.get(url)
+    assert response.status_code==200
+    assert response.headers['content-type']=='application/zip'
+    assert response.headers['accept-ranges']=='bytes'
+    assert response.headers['content-disposition']=='attachment; filename="invoices.zip"'
+    assert response.headers['cache-control']=='no-store'
+    assert int(response.headers['content-length'])==len(response.content)
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert [archive.read(name) for name in archive.namelist()]==[content]
+    head=browser.head(url)
+    assert head.status_code==200 and head.content==b''
+    assert head.headers['content-length']==response.headers['content-length']
+    part=browser.get(url,headers={'Range':'bytes=0-31','If-Range':response.headers['etag']})
+    assert part.status_code==206 and part.content==response.content[:32]
+    assert part.headers['content-range']==f'bytes 0-31/{len(response.content)}'
+    assert browser.get(url,headers={'Range':'bytes=-22'}).content==response.content[-22:]
+    assert browser.get(url,headers={'Range':'bytes=999999999-'}).status_code==416
+    assert TestClient(app).get(url).status_code==401
+    other=TestClient(app,headers={'X-Piaoxu-Request':'1'})
+    assert other.post('/api/auth/login',json={'username':'admin','password':'admin'}).status_code==200
+    assert other.get(url).status_code==404
+    assert client.post('/api/auth/logout').status_code==200
+    assert browser.get(url).status_code==401
+
+
+def test_prepared_exports_expire_and_failed_writes_leave_no_files(isolated_storage,monkeypatch):
+    import time
+    from app import export_downloads
+    config,data,client,db,service,backup=isolated_storage
+    root=data/'export-cache';root.mkdir(mode=0o700)
+    monkeypatch.setattr(export_downloads,'ROOT',root)
+    item=client.post('/api/invoices/upload',files={'files':('invoice.xml',invoice_xml('99000000000000000002'),'application/xml')}).json()[0]
+    payload={'ids':[item['id']]}
+    prepared=client.post('/api/invoices/export/prepare',json=payload).json()['download_id']
+    path=export_downloads.resolve(prepared,client.cookies.get('piaoxu_session'))
+    assert path.stat().st_mode & 0o777==0o600
+    expired=time.time()-export_downloads.TTL-1
+    os.utime(path,(expired,expired))
+    url='/api/invoices/export/download/'+prepared
+    assert client.get(url).status_code==404 and not path.exists()
+    assert client.post('/api/invoices/export/prepare',json={'ids':[]}).status_code==422
+    assert client.post('/api/invoices/export/prepare',json={'ids':[999999999]}).status_code==404
+    assert client.post('/api/invoices/export/prepare',json={**payload,'pdf_only':True}).status_code==422
+    def full_disk(*args): raise OSError('test disk full')
+    monkeypatch.setattr(export_downloads.shutil,'copyfileobj',full_disk)
+    failed=client.post('/api/invoices/export/prepare',json=payload)
+    assert failed.status_code==500 and '临时存储空间' in failed.json()['detail']
+    assert not list(root.glob('*/*.zip'))
+    assert client.get(f"/api/invoices/{item['id']}/original").content==invoice_xml('99000000000000000002')
+
+
 def test_login_protects_data_and_account_change_revokes_sessions(isolated_storage):
     config,data,client,db,service,backup=isolated_storage
     from app.main import app

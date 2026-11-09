@@ -36,7 +36,7 @@ from .config import ensure_config, mail_sync_interval
 from . import auth
 from .deletion import delete_invoices, recover_deletions
 from .merging import merge_records
-from . import notifications
+from . import notifications, export_downloads
 
 with storage_lock_sync(exclusive=True):
     recover_interrupted_restore()
@@ -620,8 +620,7 @@ def preview_invoice_text(invoice_id: int):
         raise HTTPException(422,'无法读取原件内容') from None
     return {'text':text[:40000], 'truncated':len(text)>40000}
 
-@app.post('/api/invoices/export')
-def export(ids: ExportIds):
+def invoice_archive(ids: ExportIds):
     with connect() as db:
         rows = db.execute('SELECT * FROM invoices WHERE id IN ('+','.join('?'*len(ids.ids))+')',ids.ids).fetchall()
         setting = db.execute("SELECT value FROM settings WHERE key='filename_fields'").fetchone()
@@ -633,29 +632,54 @@ def export(ids: ExportIds):
         raise HTTPException(422,'所选发票中包含 OFD 或 XML 或图片原件，没有 PDF 原件；请选择原格式导出')
     fields = json.loads(setting['value']) if setting else ['抬头','商户','金额','开票日期']
     output = tempfile.SpooledTemporaryFile(max_size=8*1024*1024)
-    with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
-        used = set()
-        for row in rows:
-            names = originals[row['id']]
-            if ids.pdf_only: names = [name for name in names if Path(name).suffix.lower()=='.pdf']
-            for stored_name in names:
-                path = FILES / stored_name
-                if not path.is_file(): raise HTTPException(404,'部分原件不存在')
-                variant = dict(row); variant['stored_name'] = stored_name
-                name = export_filename(variant, fields)
-                ext = Path(stored_name).suffix.lower()
-                stem = name[:-len(ext)]
-                idx = 2
-                while name.casefold() in used:
-                    name = f'{stem}_{idx}{ext}'; idx += 1
-                used.add(name.casefold())
-                z.write(path, name)
-    output.seek(0)
+    try:
+        with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
+            used = set()
+            for row in rows:
+                names = originals[row['id']]
+                if ids.pdf_only: names = [name for name in names if Path(name).suffix.lower()=='.pdf']
+                for stored_name in names:
+                    path = FILES / stored_name
+                    if not path.is_file(): raise HTTPException(404,'部分原件不存在')
+                    variant = dict(row); variant['stored_name'] = stored_name
+                    name = export_filename(variant, fields)
+                    ext = Path(stored_name).suffix.lower()
+                    stem = name[:-len(ext)]
+                    idx = 2
+                    while name.casefold() in used:
+                        name = f'{stem}_{idx}{ext}'; idx += 1
+                    used.add(name.casefold())
+                    z.write(path, name)
+        output.seek(0)
+        return output
+    except Exception:
+        output.close()
+        raise
+
+@app.post('/api/invoices/export')
+def export(ids: ExportIds):
+    output = invoice_archive(ids)
     def stream():
         try:
             while chunk := output.read(1024*1024): yield chunk
         finally: output.close()
     return StreamingResponse(stream(), media_type='application/zip',headers={'Content-Disposition':'attachment; filename="invoices.zip"'})
+
+@app.post('/api/invoices/export/prepare')
+def prepare_invoice_export(ids: ExportIds, request: Request):
+    try:
+        with invoice_archive(ids) as output:
+            download_id = export_downloads.prepare(output, request.cookies.get('piaoxu_session', ''))
+    except OSError:
+        raise HTTPException(500,'打包失败，请检查临时存储空间') from None
+    return {'download_id':download_id}
+
+@app.api_route('/api/invoices/export/download/{download_id}', methods=['GET','HEAD'])
+def download_invoice_export(download_id: str, request: Request):
+    path = export_downloads.resolve(download_id, request.cookies.get('piaoxu_session', ''))
+    if path is None:
+        raise HTTPException(404,'下载链接已过期或不可用，请重新导出')
+    return FileResponse(path,media_type='application/zip',filename='invoices.zip',headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
 @app.get('/api/groups')
 def groups():
