@@ -114,3 +114,11 @@ test('merge shows conflicts and keeps the dialog usable after a failed request',
   await assert.rejects(h.context.submitInvoiceMerge(),/发票已发生变化/);
   assert.equal(h.submit.disabled,false);assert.ok(h.context.pendingMerge);assert.equal(h.context.form.dataset.uploading,undefined);
 });
+
+test('mail retry separates redundant links from real processing failures',async()=>{
+  const h=reprocessHarness();
+  h.context.api=async()=>({json:async()=>({existing:1,files_found:1,skipped_links:1,errors:0})});
+  await h.run();assert.equal(h.status.textContent,'已存在 1 张 · 跳过 1 个重复下载入口');
+  h.context.api=async()=>({json:async()=>({existing:1,files_found:1,errors:1,error_reasons:['链接下载失败']})});
+  await h.run();assert.equal(h.status.textContent,'已存在 1 张 · 1 项处理失败（链接下载失败）');
+});

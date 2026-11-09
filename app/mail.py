@@ -9,6 +9,7 @@ import threading
 from html.parser import HTMLParser
 from email.header import decode_header, make_header
 from email.utils import parsedate_to_datetime
+from urllib.parse import parse_qs, urlsplit
 from .db import connect
 from .download import candidates, download
 from .email_html import HTML_VERSION, prepare_html
@@ -223,16 +224,42 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
             db.execute('UPDATE emails SET html_body=?,html_checked=1,html_version=? WHERE id=? AND (html_checked=0 OR html_version<?)',(rich_html,HTML_VERSION,email_id,HTML_VERSION))
     errors=archive_errors
     created_ids, existing_ids = set(), set()
-    for link in links:
-        try: attachments.append(download(link))
-        except Exception: errors.append('链接下载失败')
-    attachments.sort(key=lambda item: 0 if item[0].lower().endswith('.pdf') else 1)
-    for name,content in attachments:
+    def import_attachment(item):
+        name,content=item
         try:
             ident, created=import_file(name,content,'邮件',email_id)
             if created: created_ids.add(ident)
             elif ident not in created_ids: existing_ids.add(ident)
         except Exception: errors.append('附件导入失败')
+    pending=attachments.copy()
+    remaining_links=links
+    # This provider's email button opens the same invoice that is listed in the mail body.
+    # Leave unrelated links, ambiguous messages, and missing invoice numbers on the normal path.
+    portal=urlsplit(links[0]) if len(links)==1 else None
+    if (portal and portal.netloc.lower()=='webapp.crestv.com' and portal.path=='/qrscan/staticclick'
+            and parse_qs(portal.query).get('Type')==['invmaildesktop']):
+        mail_text=subject+'\n'+body_text+'\n'+html_text
+        expected=set(re.findall(r'发\s*票\s*号\s*码[：:\s]*([0-9]{8,20})(?![0-9])',mail_text))
+        counts=re.findall(r'发票数量\s*(?:共计|共|为)?[：:\s]*([0-9]{1,6})\s*张',mail_text)
+        if expected and all(int(count)==len(expected) for count in counts):
+            pending=[]
+            for item in attachments:
+                if item[0].lower().endswith('.pdf'): import_attachment(item)
+                else: pending.append(item)
+            with connect() as db:
+                covered={row['invoice_number']:row['id'] for row in db.execute("""SELECT i.id,i.invoice_number
+                    FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
+                    WHERE ie.email_id=? AND i.recognition_status='已识别' AND i.duplicate_state IN ('','dismissed')""",(email_id,))}
+            if expected.issubset(covered):
+                remaining_links=[]
+                existing_ids.update(covered[number] for number in expected if covered[number] not in created_ids)
+    for link in remaining_links:
+        try:
+            item=download(link)
+            attachments.append(item);pending.append(item)
+        except Exception: errors.append('链接下载失败')
+    pending.sort(key=lambda item: 0 if item[0].lower().endswith('.pdf') else 1)
+    for item in pending: import_attachment(item)
     if force:
         refresh_native_mail_invoices(email_id)
         merged = merge_existing_formats(email_id)
@@ -252,7 +279,7 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
             if (any(row['recognition_status'] == '识别失败' for row in fresh)
                     or (state in ('导入失败', '发票链接待处理') and (invoice_hint or attachments or links))):
                 queue_notification(db, email_id, 'failed', [row['id'] for row in fresh if row['recognition_status']=='识别失败'])
-    return {'email_id':email_id,'created_ids':sorted(created_ids),'existing_ids':sorted(existing_ids),'files_found':len(attachments),'links_found':len(links),'errors':len(errors),'status':state}
+    return {'email_id':email_id,'created_ids':sorted(created_ids),'existing_ids':sorted(existing_ids),'files_found':len(attachments),'links_found':len(links),'skipped_links':len(links)-len(remaining_links),'errors':len(errors),'error_reasons':list(dict.fromkeys(errors)),'status':state}
 
 def sync_folder(mail, account_id, token, folder):
     status, _ = mail.select(token, readonly=True)

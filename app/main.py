@@ -838,7 +838,8 @@ def reprocess_mail(email_id: int):
         row=db.execute('SELECT status FROM emails WHERE id=?',(email_id,)).fetchone()
     return {'created':len(result['created_ids']), 'existing':len(result['existing_ids']),
             'retried':retried,'retry_failed':retry_failed,'errors':result['errors'],
-            'files_found':result['files_found'],'status':row['status'] if row else result['status']}
+            'error_reasons':result['error_reasons'],'files_found':result['files_found'],
+            'skipped_links':result['skipped_links'],'status':row['status'] if row else result['status']}
 
 @app.get('/api/notification-channels')
 def notification_channels():

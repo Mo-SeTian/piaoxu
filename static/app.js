@@ -361,8 +361,10 @@ async function reprocessMessage(button){
     if(result.created)parts.push(`新增 ${result.created} 张`);
     if(result.existing)parts.push(`已存在 ${result.existing} 张`);
     if(result.retried)parts.push(`重新识别 ${result.retried} 张`);
-    if(result.errors||result.retry_failed)parts.push(`${(result.errors||0)+(result.retry_failed||0)} 项处理失败`);
-    if(!result.files_found&&!result.errors)parts.push('未发现可识别的发票文件');
+    if(result.skipped_links)parts.push(`跳过 ${result.skipped_links} 个重复下载入口`);
+    if(result.errors)parts.push(`${result.errors} 项处理失败${result.error_reasons?.length?'（'+result.error_reasons.join('、')+'）':''}`);
+    if(result.retry_failed)parts.push(`${result.retry_failed} 张重新识别失败`);
+    if(!result.files_found&&!result.errors&&!result.skipped_links)parts.push('未发现可识别的发票文件');
     if(result.status==='识别失败')parts.push('有发票需要核对');
     const summary=parts.join(' · ')||'邮件处理完成';
     reprocessFeedback(id,summary);

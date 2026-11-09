@@ -1202,3 +1202,56 @@ def test_mail_without_attachments_imports_http_pdf_link_once(isolated_storage,mo
     replay=mail.process_message(Mail(),account,'1','test','INBOX',(first['email_id'],first['status']),force=True)
     assert replay['status']=='已识别' and not replay['created_ids'] and replay['existing_ids']==[item['id']]
     assert len(client.get('/api/invoices').json())==1
+
+
+@pytest.mark.parametrize('scenario', ['covered','missing_number','declared_more','other_provider','broken_archive'])
+def test_crest_mail_download_fallback(isolated_storage,monkeypatch,scenario):
+    from email.message import EmailMessage
+    from app import mail
+    _,_,client,db,_,_=isolated_storage
+    fields,pdf,xml=discounted_invoice_files()
+    number=fields['invoice_number']
+    host='other.example' if scenario=='other_provider' else 'webapp.crestv.com'
+    numbers=f'<p>发票号码：{number}</p>'
+    if scenario=='missing_number': numbers+='<p>发票号码：88888888888888888888</p>'
+    if scenario=='declared_more': numbers+='<p>发票数量共计2张</p>'
+    message=EmailMessage();message['Subject']='您收到示例商户开具的发票'
+    message.set_content('请查收电子发票')
+    message.add_alternative(f'{numbers}<a href="http://{host}/qrscan/staticclick?Type=invmaildesktop&amp;Code=TEST_ONLY">点击下载发票。</a>',subtype='html')
+    message.add_attachment(pdf,maintype='application',subtype='pdf',filename=f'{number}.pdf')
+    message.add_attachment(xml,maintype='application',subtype='xml',filename=f'{number}.xml')
+    if scenario=='broken_archive':
+        message.add_attachment(b'broken zip',maintype='application',subtype='zip',filename='broken.zip')
+    monkeypatch.setattr(mail.imaplib,'IMAP4_SSL',synthetic_imap({b'1':message.as_bytes()},[],[b'123']))
+    account=client.post('/api/accounts',json={'name':'测试邮箱','email':'fallback-test@qq.com','auth_code':'fake'}).json()['id']
+    client.post('/api/notification-channels',json={'name':'测试渠道','provider':'serverchan','secret':'SCT_test_fallback'})
+    downloads=[]
+    def download(url):
+        downloads.append(url)
+        raise ValueError('需要登录或手动下载发票')
+    monkeypatch.setattr(mail,'download',download)
+    assert mail.sync_account(account)==1
+    message_row=client.get('/api/emails').json()[0]
+    item=client.get('/api/invoices').json()[0]
+    assert message_row['recognized_count']==1 and message_row['failed_count']==0
+    assert item['original_name']==f'{number}.pdf' and len(item['other_originals'])==1
+    skipped=scenario in ('covered','broken_archive')
+    error_reason=[] if scenario=='covered' else ['压缩附件处理失败'] if scenario=='broken_archive' else ['链接下载失败']
+    assert message_row['status']==('导入失败' if error_reason else '已识别')
+    assert len(downloads)==int(not skipped)
+    with db.connect() as conn:
+        events=[row['event'] for row in conn.execute('SELECT event FROM notification_deliveries ORDER BY id')]
+        assert events==(['received','failed'] if error_reason else ['received'])
+        if scenario=='covered':
+            # An already affected email should leave the failure list on manual retry.
+            conn.execute("UPDATE emails SET status='导入失败' WHERE id=?",(message_row['id'],))
+    response=client.post(f"/api/emails/{message_row['id']}/reprocess")
+    assert response.status_code==200
+    result=response.json()
+    assert result['existing']==1 and result['created']==0
+    assert result['skipped_links']==int(skipped) and result['error_reasons']==error_reason
+    assert result['errors']==len(error_reason) and result['status']==message_row['status']
+    assert len(downloads)==2*int(not skipped)
+    assert len(client.get('/api/invoices').json())==1
+    attention=client.get('/api/emails',params={'attention':True}).json()
+    assert bool(attention)==bool(error_reason)
