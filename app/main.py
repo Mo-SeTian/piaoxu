@@ -1,6 +1,6 @@
 import asyncio
 import os
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 import json
 import hashlib
 import base64
@@ -11,7 +11,7 @@ import zipfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Optional, Literal
-from datetime import date
+from datetime import date, datetime
 import sqlite3
 import threading
 import fitz
@@ -262,20 +262,25 @@ async def restore_backup_file(file: UploadFile = File(...)):
         await file.close()
 
 @app.get('/api/invoices')
-def invoices(limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), query: str='', reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all'):
+def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,ge=0), query: str='', reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all', sort: Literal['imported_desc','amount_asc','amount_desc']='imported_desc', imported_from: Optional[date]=None, imported_to: Optional[date]=None):
+    if imported_from and imported_to and imported_from > imported_to:
+        raise HTTPException(422,'开始日期不能晚于结束日期')
     with connect() as db:
         base='''FROM invoices i LEFT JOIN group_invoices gi ON gi.invoice_id=i.id LEFT JOIN groups g ON g.id=gi.group_id LEFT JOIN emails e ON e.id=i.email_id LEFT JOIN accounts a ON a.id=e.account_id'''
         conditions=[];args=[]
         if view=='review': conditions.append("(i.recognition_status='识别失败' OR i.duplicate_state='confirmed' OR i.id IN (SELECT duplicate_of FROM invoices WHERE duplicate_of IS NOT NULL AND (recognition_status='识别失败' OR duplicate_state='confirmed')))")
         if limit is not None: conditions.append("i.recognition_status='已识别'")
         if reimbursement!='all': conditions.append('i.reimbursed=?');args.append(int(reimbursement=='reimbursed'))
+        if imported_from: conditions.append('substr(i.imported_at,1,10)>=?');args.append(imported_from.isoformat())
+        if imported_to: conditions.append('substr(i.imported_at,1,10)<=?');args.append(imported_to.isoformat())
         if query:
             escaped=query.lower().replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
             conditions.append("LOWER(COALESCE(i.buyer,'')||' '||COALESCE(i.seller,'')||' '||COALESCE(i.original_name,'')||' '||COALESCE(i.invoice_number,'')) LIKE ? ESCAPE '\\'")
             args.append('%'+escaped+'%')
         where=(' WHERE '+' AND '.join(conditions)) if conditions else ''
         total=db.execute('SELECT count(*) '+base+where,args).fetchone()[0] if limit is not None else None
-        sql='SELECT i.*,g.name group_name,a.name account_name '+base+where+' ORDER BY i.imported_at DESC,i.id DESC'
+        order={'imported_desc':'i.imported_at DESC,i.id DESC','amount_asc':'i.amount_cents IS NULL,i.amount_cents ASC,i.imported_at DESC,i.id DESC','amount_desc':'i.amount_cents IS NULL,i.amount_cents DESC,i.imported_at DESC,i.id DESC'}[sort]
+        sql='SELECT i.*,g.name group_name,a.name account_name '+base+where+' ORDER BY '+order
         rows = [dict(r) for r in db.execute(sql+(' LIMIT ? OFFSET ?' if limit is not None else ''),(*args,limit,offset) if limit is not None else args)]
         by_id = {row['id']:row for row in rows}
         for row in rows: row['mail_sources'] = []; row['other_originals'] = []
@@ -656,6 +661,9 @@ def invoice_archive(ids: ExportIds):
         output.close()
         raise
 
+def invoice_zip_name(ids: ExportIds):
+    return f'发票_{len(set(ids.ids))}张_{datetime.now():%Y%m%d_%H%M%S}.zip'
+
 @app.post('/api/invoices/export')
 def export(ids: ExportIds):
     output = invoice_archive(ids)
@@ -663,23 +671,24 @@ def export(ids: ExportIds):
         try:
             while chunk := output.read(1024*1024): yield chunk
         finally: output.close()
-    return StreamingResponse(stream(), media_type='application/zip',headers={'Content-Disposition':'attachment; filename="invoices.zip"'})
+    return StreamingResponse(stream(), media_type='application/zip',headers={'Content-Disposition':"attachment; filename*=utf-8''"+quote(invoice_zip_name(ids))})
 
 @app.post('/api/invoices/export/prepare')
 def prepare_invoice_export(ids: ExportIds, request: Request):
+    filename = invoice_zip_name(ids)
     try:
         with invoice_archive(ids) as output:
-            download_id = export_downloads.prepare(output, request.cookies.get('piaoxu_session', ''))
+            download_id = export_downloads.prepare(output, request.cookies.get('piaoxu_session', ''), filename)
     except OSError:
         raise HTTPException(500,'打包失败，请检查临时存储空间') from None
-    return {'download_id':download_id}
+    return {'download_id':download_id,'filename':filename}
 
 @app.api_route('/api/invoices/export/download/{download_id}', methods=['GET','HEAD'])
 def download_invoice_export(download_id: str, request: Request):
     path = export_downloads.resolve(download_id, request.cookies.get('piaoxu_session', ''))
     if path is None:
         raise HTTPException(404,'下载链接已过期或不可用，请重新导出')
-    return FileResponse(path,media_type='application/zip',filename='invoices.zip',headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+    return FileResponse(path,media_type='application/zip',filename=path.name.split('-',1)[1],headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
 @app.get('/api/groups')
 def groups():

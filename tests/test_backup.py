@@ -54,6 +54,15 @@ def test_native_export_download_supports_ranges_and_requires_the_same_session(is
     config,data,client,db,service,backup=isolated_storage
     content=invoice_xml('99000000000000000001')
     item=client.post('/api/invoices/upload',files={'files':('invoice.xml',content,'application/xml')}).json()[0]
+    import hashlib,re
+    pdf=b'%PDF-1.7\nsynthetic original PDF\n%%EOF'
+    stream=io.BytesIO()
+    with zipfile.ZipFile(stream,'w') as archive: archive.writestr('OFD.xml',content)
+    with db.connect() as conn:
+        for name,original in [('invoice.pdf',pdf),('invoice.ofd',stream.getvalue())]:
+            digest=hashlib.sha256(original).hexdigest();stored=digest+os.path.splitext(name)[1]
+            (data/'files'/stored).write_bytes(original)
+            conn.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',(item['id'],digest,name,stored))
     prepared=client.post('/api/invoices/export/prepare',json={'ids':[item['id']]})
     assert prepared.status_code==200
     url='/api/invoices/export/download/'+prepared.json()['download_id']
@@ -62,14 +71,18 @@ def test_native_export_download_supports_ranges_and_requires_the_same_session(is
     assert response.status_code==200
     assert response.headers['content-type']=='application/zip'
     assert response.headers['accept-ranges']=='bytes'
-    assert response.headers['content-disposition']=='attachment; filename="invoices.zip"'
+    from urllib.parse import unquote
+    filename=prepared.json()['filename']
+    assert re.fullmatch(r'发票_1张_\d{8}_\d{6}\.zip',filename)
+    assert unquote(response.headers['content-disposition'].split("filename*=utf-8''")[1])==filename
     assert response.headers['cache-control']=='no-store'
     assert int(response.headers['content-length'])==len(response.content)
     with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-        assert [archive.read(name) for name in archive.namelist()]==[content]
+        assert sorted(archive.read(name) for name in archive.namelist())==sorted([content,pdf,stream.getvalue()])
     head=browser.head(url)
     assert head.status_code==200 and head.content==b''
     assert head.headers['content-length']==response.headers['content-length']
+    assert head.headers['content-disposition']==response.headers['content-disposition']
     part=browser.get(url,headers={'Range':'bytes=0-31','If-Range':response.headers['etag']})
     assert part.status_code==206 and part.content==response.content[:32]
     assert part.headers['content-range']==f'bytes 0-31/{len(response.content)}'
@@ -674,6 +687,32 @@ def test_invoice_and_email_pagination_filters(isolated_storage):
     assert client.get('/api/invoices',params={'limit':50,'query':'%'}).json()['total']==0
     messages=client.get('/api/emails',params={'limit':50,'offset':50,'account_id':account,'invoice_status':'none'}).json()
     assert messages['total']==55 and len(messages['items'])==5
+
+
+def test_invoice_date_selection_and_amount_sort_cover_all_pages(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    with db.connect() as conn:
+        for i in range(55):
+            day='2026-11-09' if i%2==0 else '2026-11-10'
+            conn.execute("INSERT INTO invoices(sha256,original_name,stored_name,source,imported_at,seller,amount_cents,invoice_date,recognition_status,reimbursed) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                         (f'sort-{i}',f'{i}.pdf',f'{i}.pdf','本地上传',day+('T00:00:00' if i==0 else 'T23:59:59'),'日期批量商户',None if i==54 else (54-i)*100,'2026-10-01','已识别',i%2))
+    for sort,reverse in [('amount_asc',False),('amount_desc',True)]:
+        pages=[client.get('/api/invoices',params={'limit':20,'offset':offset,'sort':sort}).json() for offset in (0,20,40)]
+        rows=[row for page in pages for row in page['items']]
+        assert len(rows)==len({row['id'] for row in rows})==55
+        assert all(page['total']==55 for page in pages)
+        amounts=[row['amount_cents'] for row in rows]
+        assert amounts[-1] is None
+        assert amounts[:-1]==sorted(amounts[:-1],reverse=reverse)
+    params={'limit':500,'imported_from':'2026-11-09','imported_to':'2026-11-09','query':'日期批量','reimbursement':'unreimbursed'}
+    selected=client.get('/api/invoices',params=params).json()
+    assert selected['total']==len(selected['items'])==28
+    assert all(row['imported_at'].startswith('2026-11-09') and row['invoice_date']=='2026-10-01' for row in selected['items'])
+    assert client.get('/api/invoices',params={**params,'imported_to':'2026-11-10','reimbursement':'all'}).json()['total']==55
+    assert client.get('/api/invoices',params={**params,'query':'不存在'}).json()['total']==0
+    assert client.get('/api/invoices',params={'imported_from':'2026-11-10','imported_to':'2026-11-09'}).status_code==422
+    assert client.get('/api/invoices',params={'imported_from':'2026-11-31'}).status_code==422
+    assert client.get('/api/invoices',params={'sort':'invalid'}).status_code==422
 
 
 def test_email_filters_cover_visible_invoice_states(isolated_storage):

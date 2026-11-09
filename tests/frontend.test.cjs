@@ -4,12 +4,45 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)))}
+function dateSelectionHarness(total=55){
+  const calls=[],items=Array.from({length:Math.min(total,500)},(_,i)=>({id:i+1,amount_cents:100}));
+  const context=vm.createContext({Set,URLSearchParams,selectingDates:false,
+    state:{page:'invoices',query:'餐饮',filter:'未报销',selected:new Set([1000]),selectedRecords:new Map([[1000,{id:1000}]])},
+    api:async url=>{calls.push(url);return {json:async()=>({items,total})}}});
+  vm.runInContext(section('async function selectInvoiceDates(', '\nasync function submitInvoiceDateSelection('),context);
+  return {context,calls,run:()=>context.selectInvoiceDates('2026-11-09','2026-11-10')};
+}
+test('date selection includes invoices beyond the visible page and preserves earlier choices',async()=>{
+  const h=dateSelectionHarness();assert.equal(await h.run(),55);
+  const query=new URL(h.calls[0],'http://localhost').searchParams;
+  assert.equal(query.get('limit'),'500');assert.equal(query.get('query'),'餐饮');assert.equal(query.get('reimbursement'),'unreimbursed');
+  assert.equal(query.get('imported_from'),'2026-11-09');assert.equal(query.get('imported_to'),'2026-11-10');
+  assert.equal(h.context.state.selected.size,56);assert.equal(h.context.state.selectedRecords.size,56);
+});
+test('excessive date matches and changed filters leave the existing selection intact',async()=>{
+  const excessive=dateSelectionHarness(501);await assert.rejects(excessive.run(),/500/);
+  assert.equal(excessive.context.state.selected.size,1);assert.equal(excessive.context.selectingDates,false);
+  const h=dateSelectionHarness();let resolve;
+  h.context.api=()=>new Promise(done=>resolve=done);
+  const pending=h.run();h.context.state.query='其他';resolve({json:async()=>({items:[{id:1}],total:1})});
+  await assert.rejects(pending,/筛选条件已变化/);assert.equal(h.context.state.selected.size,1);
+});
+test('amount display preserves global server order instead of regrouping by date',()=>{
+  const rows=[1,2,3].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:id*100,imported_at:id===2?'2026-11-10':'2026-11-09'}));
+  const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),invoiceSort:'amount_asc',filter:'全部',query:'',invoiceCount:3,invoiceTotal:3},
+    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoicePreview:()=>'',listPager:()=>''});
+  vm.runInContext(section('function invoicePage(', '\nfunction groupPage('),context);
+  const html=context.invoicePage();
+  assert.ok(html.indexOf('data-preview="1"')<html.indexOf('data-preview="2"'));
+  assert.ok(html.indexOf('data-preview="2"')<html.indexOf('data-preview="3"'));
+  assert.doesNotMatch(html,/class="date-row"/);assert.match(html,/金额从低到高/);
+});
 function exportHarness(){
   const controls=[{disabled:false},{disabled:true}],link={clicks:0,click(){this.clicks++}},done={},messages=[],calls=[];
   const context=vm.createContext({exporting:false,state:{selected:new Set([1,2])},
     document:{querySelectorAll:()=>controls},form:{dataset:{submit:'old'},querySelector:s=>s==='[data-export-download]'?link:done},
-    toast:message=>messages.push(message),uiIcon:()=>'',openDialog:(title,html)=>{context.html=html},
-    api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({download_id:'a'.repeat(48)})}}});
+    toast:message=>messages.push(message),esc:String,uiIcon:()=>'',openDialog:(title,html)=>{context.html=html},
+    api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({download_id:'a'.repeat(48),filename:'发票_2张_20261110_153012.zip'})}}});
   vm.runInContext(section('async function exportInvoices(', '\nasync function action('),context);
   return {context,controls,link,done,messages,calls};
 }
@@ -17,7 +50,7 @@ test('invoice export uses a native HTTP download and keeps a retry link',async()
   const h=exportHarness();await h.context.exportInvoices(true);
   assert.equal(h.calls[0].url,'/api/invoices/export/prepare');assert.equal(h.calls[0].payload.pdf_only,true);
   assert.deepEqual(h.calls[0].payload.ids,[1,2]);
-  assert.match(h.context.html,/href="\/api\/invoices\/export\/download\/[a-f0-9]{48}" download="invoices.zip"/);
+  assert.match(h.context.html,/href="\/api\/invoices\/export\/download\/[a-f0-9]{48}" download="发票_2张_20261110_153012.zip"/);
   assert.equal(h.link.clicks,1);assert.equal(h.done.textContent,'完成');
   assert.equal(h.context.exporting,false);assert.equal(h.controls[0].disabled,false);assert.equal(h.controls[1].disabled,true);
 });
