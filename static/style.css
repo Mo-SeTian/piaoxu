@@ -2,7 +2,7 @@
 :root{
   --ink:#20252d;--muted:#626b77;--line:#dde2e8;--frame:#f3f5f7;--surface:#fff;
   --mist:#eaf0f5;--fog:#f7f9fb;--peach:#fbe1d1;--brown:#5d2a1a;
-  --accent:var(--ink);--accent-soft:var(--mist);--control:#d6d6da;--radius:24px;
+  --accent:var(--ink);--accent-soft:var(--mist);--control:#d6d6da;--focus:#738499;--radius:24px;
   --serif:"Piaoxu Serif","Songti SC","STSong","SimSun",Georgia,serif;
   --motion-fast:160ms;--motion-panel:240ms;--ease:cubic-bezier(.2,.8,.2,1);
   font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
@@ -15,7 +15,8 @@ button,input,select,summary{font:inherit}
 button,summary{cursor:pointer;touch-action:manipulation}
 button:disabled{cursor:not-allowed}
 a{color:inherit;text-underline-offset:4px}
-button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--ink);outline-offset:4px}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+body[data-input-mode="pointer"] :focus-visible{outline:none}
 h1,h2,p{margin:0}
 h1{font:400 42px/1.35 var(--serif);letter-spacing:-.035em}
 h2{font-size:16px;line-height:1.5;font-weight:500}
@@ -108,7 +109,7 @@ input[type=checkbox]{width:17px;height:17px;margin:0;accent-color:var(--ink);fle
 .email-select-value{display:flex;align-items:center;gap:8px;min-height:44px;min-width:0;padding:10px 14px;border:1px solid var(--control);border-radius:999px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.4}
 .email-select-value>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.email-select-value .button-icon{width:14px;height:14px}
 .email-select select{position:absolute;inset:0;width:100%;height:100%;min-width:0;padding:0;opacity:0;cursor:pointer;font-size:16px}
-.email-select:focus-within .email-select-value{outline:2px solid var(--ink);outline-offset:3px}
+body:not([data-input-mode="pointer"]) .email-select:has(select:focus-visible) .email-select-value{outline:2px solid var(--focus);outline-offset:2px}
 body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:100%;min-height:0;white-space:normal;overflow-wrap:anywhere;text-align:left;font-size:14px;font-weight:500;line-height:1.7;padding:0}
 .email-row{grid-template-columns:minmax(120px,.5fr) minmax(0,1.8fr) auto;gap:22px}
 .email-row>strong{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;color:var(--muted);font-weight:400}
@@ -147,10 +148,10 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .invoice-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px 0 10px}
 .search-field{display:flex;align-items:center;gap:8px;min-width:0;max-width:285px;flex:1;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
 .search-field .button-icon{color:var(--muted);width:15px;height:15px}
-.search-field:focus-within{outline:2px solid var(--ink);outline-offset:2px}
+.search-field:focus-within{border-color:var(--focus)}body:not([data-input-mode="pointer"]) .search-field:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
 .search-field input{min-width:0;width:100%;height:36px;border:0;background:none;padding:0;font-size:12px;color:var(--ink);outline:0}
 .invoice-tools{display:flex;align-items:center;gap:8px;flex:none;min-width:0}.invoice-tools>.button{font-size:12px;padding:8px 12px}
-.invoice-sort{position:relative;display:block;width:fit-content;flex:none}.invoice-sort-value{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border:1px solid var(--control);border-radius:999px;background:var(--surface);color:var(--ink);font-size:12px;white-space:nowrap}.invoice-sort-value .button-icon{width:12px;height:12px}.invoice-sort select{position:absolute;inset:0;width:100%;height:100%;min-width:0;padding:0;opacity:0;font-size:16px;cursor:pointer}.invoice-sort:focus-within .invoice-sort-value{outline:2px solid var(--ink);outline-offset:3px}
+.invoice-sort{position:relative;display:block;width:fit-content;flex:none}.invoice-sort-value{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border:1px solid var(--control);border-radius:999px;background:var(--surface);color:var(--ink);font-size:12px;white-space:nowrap}.invoice-sort-value .button-icon{width:12px;height:12px}.invoice-sort select{position:absolute;inset:0;width:100%;height:100%;min-width:0;padding:0;opacity:0;font-size:16px;cursor:pointer}body:not([data-input-mode="pointer"]) .invoice-sort:has(select:focus-visible) .invoice-sort-value{outline:2px solid var(--focus);outline-offset:2px}
 .invoice-table{border:0;overflow:visible}
 .invoice-table table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;text-align:left}
 .col-check{width:32px}.col-date{width:105px}.col-amount{width:152px}.col-status{width:78px}
@@ -210,7 +211,7 @@ dialog:has(.preview-workspace) .dialog-head{flex:none;margin-bottom:18px}
 .document-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;padding:12px;border-bottom:1px solid var(--line);background:var(--surface)}
 .document-toolbar .pdf-pager{padding:0;gap:8px}.document-toolbar .pdf-page-error{margin:0;flex-basis:100%}
 .document-zoom{display:flex;align-items:center;gap:6px;margin-left:auto}.document-zoom .button{min-height:34px;padding:6px 10px;flex:none}.document-zoom .button[aria-label]{width:34px;padding:0}.document-zoom [data-preview-scale-label]{min-width:44px;text-align:center;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-.document-scroll{min-height:0;overflow:auto;overscroll-behavior:contain}.document-scroll:focus-visible{outline:2px solid var(--ink);outline-offset:-3px}
+.document-scroll{min-height:0;overflow:auto;overscroll-behavior:contain}.document-scroll:focus-visible{outline:2px solid var(--focus);outline-offset:-3px}
 .document-canvas{padding:20px;min-height:100%}.document-canvas img{display:block;width:100%;height:auto;max-width:none;margin-inline:auto;box-shadow:0 2px 12px #20252d14}
 .preview-workspace>.preview-document{margin:0;aspect-ratio:auto;min-height:200px}
 @media(max-width:900px){.preview-workspace{grid-template-columns:minmax(0,1fr) 240px;gap:18px}.document-toolbar{gap:8px;padding:10px}.document-canvas{padding:12px}}
