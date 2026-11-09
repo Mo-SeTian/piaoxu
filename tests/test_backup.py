@@ -1166,3 +1166,39 @@ def test_merging_pdf_into_xml_uses_normal_pdf_preview_and_multiple_originals(iso
         assert {archive.read(name) for name in archive.namelist()}=={pdf,xml}
     assert client.get('/api/summary').json()['invoices']==1
     assert client.get('/api/backup/export').status_code==200
+
+
+def test_mail_without_attachments_imports_http_pdf_link_once(isolated_storage,monkeypatch):
+    from email.message import EmailMessage
+    from app import mail
+    import app.download as downloader
+    _,_,client,db,_,_=isolated_storage
+    fields,pdf,_=discounted_invoice_files()
+    url='http://files.example/invoice.pdf?Expires=1234567890&AccessKey=TEST_ONLY&Signature=a%2Bb%3D'
+    message=EmailMessage();message['Subject']='您的订单电子发票已开具'
+    message.set_content('电子发票已开具，请点击邮件中的下载链接')
+    message.add_alternative(f'<p>电子发票已开具</p><a href="{url.replace("&","&amp;")}">发票PDF文件下载</a>',subtype='html')
+    requests=[]
+    class Response:
+        status=200
+        def getheader(self,key): return 'application/pdf' if key=='Content-Type' else None
+        def read(self,n): return pdf[:n]
+    class Connection:
+        def __init__(self,host,port,**kwargs): assert host=='files.example' and port==443
+        def request(self,method,path,headers): requests.append((method,path))
+        def getresponse(self): return Response()
+        def close(self): pass
+    class Mail:
+        def uid(self,*args): return 'OK',[(None,message.as_bytes())]
+    monkeypatch.setattr(downloader,'PublicHTTPS',Connection)
+    with db.connect() as conn:
+        account=conn.execute("INSERT INTO accounts(name,email,secret) VALUES('test','test@example.test','')").lastrowid
+    first=mail.process_message(Mail(),account,'1','test','INBOX')
+    assert first['status']=='已识别' and first['links_found']==1 and len(first['created_ids'])==1
+    assert requests==[('GET','/invoice.pdf?Expires=1234567890&AccessKey=TEST_ONLY&Signature=a%2Bb%3D')]
+    item=client.get('/api/invoices').json()[0]
+    assert all(item[key]==value for key,value in fields.items())
+    assert client.get(f"/api/invoices/{item['id']}/original").content==pdf
+    replay=mail.process_message(Mail(),account,'1','test','INBOX',(first['email_id'],first['status']),force=True)
+    assert replay['status']=='已识别' and not replay['created_ids'] and replay['existing_ids']==[item['id']]
+    assert len(client.get('/api/invoices').json())==1

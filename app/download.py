@@ -48,12 +48,15 @@ def direct_url(url):
 
 
 def candidates(text, html='', base_url=''):
-    """Extract direct links and clearly labelled download anchors, without fetching here."""
+    """Extract invoice links, upgrading HTTP to HTTPS without a plaintext fallback."""
     found = []
     def add(url, label=''):
         url = urljoin(base_url, unescape(url or '').strip()).rstrip('.,;，。；)）]')
         try:
             parts = urlsplit(url)
+            if parts.scheme.lower() == 'http' and parts.port in (None,80) and not (parts.username or parts.password):
+                url = parts._replace(scheme='https',netloc=parts.netloc.removesuffix(':80')).geturl()
+                parts = urlsplit(url)
             if parts.scheme.lower() != 'https' or not parts.hostname:
                 return
         except ValueError:
@@ -62,7 +65,7 @@ def candidates(text, html='', base_url=''):
                 (INVOICE_HINT.search(label) or INVOICE_HINT.search(text) or INVOICE_HINT.search(parts.path)))) and url not in found:
             found.append(url)
     plain = unescape(text or '')
-    for match in re.finditer(r'https://[^\s<>"\']+', plain, flags=re.I):
+    for match in re.finditer(r'https?://[^\s<>"\']+', plain, flags=re.I):
         context = plain[max(0, match.start()-80):match.start()]
         add(match.group(0), context if DOWNLOAD_HINT.search(context) else '')
     if html:

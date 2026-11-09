@@ -393,7 +393,7 @@ def test_untrusted_invoice_urls_cannot_reach_private_addresses(monkeypatch):
     import socket
     from app.download import candidates, download
     assert candidates('https://example.test/file.pdf?x=1')==['https://example.test/file.pdf?x=1']
-    assert not candidates('http://example.test/file.pdf')
+    assert candidates('http://example.test/file.pdf')==['https://example.test/file.pdf']
     monkeypatch.setattr(socket,'getaddrinfo',lambda *a,**k:[(socket.AF_INET,socket.SOCK_STREAM,6,'',('127.0.0.1',443))])
     connected=[]
     monkeypatch.setattr(socket,'create_connection',lambda *a,**k: connected.append(True))
@@ -992,3 +992,41 @@ def test_static_assets_revalidate_after_updates():
         assert response.status_code==200 and response.headers['cache-control']=='no-cache'
         cached=client.get(path,headers={'If-None-Match':response.headers['etag']})
         assert cached.status_code==304 and cached.headers['cache-control']=='no-cache'
+
+
+def test_http_invoice_links_upgrade_without_changing_signature_or_unrelated_links():
+    from app.download import candidates
+    url='http://files.example/invoice.pdf?Expires=1234567890&AccessKey=TEST_ONLY&Signature=a%2Bb%2Fc%3D'
+    secure=url.replace('http://','https://',1)
+    html=f'<a href="{url.replace("&","&amp;")}">发票PDF文件下载</a>'
+    assert candidates('电子发票已开具',html)==[secure]
+    assert candidates(f'电子发票下载：{url}\n{secure}')==[secure]
+    assert candidates('电子发票','<a href="http://files.example:80/get?id=1">下载发票</a>')==['https://files.example/get?id=1']
+    assert candidates('电子发票','<a href="http://help.example/">帮助中心</a>')==[]
+    assert candidates('http://files.example:8080/invoice.pdf')==[]
+    assert candidates('http://user:password@files.example/invoice.pdf')==[]
+
+
+def test_upgraded_http_invoice_download_uses_tls_and_still_rejects_private_hosts(monkeypatch):
+    import socket,pytest
+    import app.download as dl
+    url=dl.candidates('http://files.example/invoice.pdf?Signature=TEST_ONLY')[0]
+    calls=[]
+    class Response:
+        status=200
+        def getheader(self,key): return 'application/pdf' if key=='Content-Type' else None
+        def read(self,n): return b'%PDF-1.7\nexample\n%%EOF'
+    class Connection:
+        def __init__(self,host,port,**kwargs): calls.append((host,port,kwargs['context'].check_hostname))
+        def request(self,method,path,headers): calls.append((method,path))
+        def getresponse(self): return Response()
+        def close(self): pass
+    with monkeypatch.context() as mocked:
+        mocked.setattr(dl,'PublicHTTPS',Connection)
+        assert dl.download(url)[0].endswith('.pdf')
+    assert calls==[('files.example',443,True),('GET','/invoice.pdf?Signature=TEST_ONLY')]
+    connected=[]
+    monkeypatch.setattr(socket,'getaddrinfo',lambda *args,**kwargs:[(socket.AF_INET,socket.SOCK_STREAM,6,'',('127.0.0.1',443))])
+    monkeypatch.setattr(socket,'create_connection',lambda *args,**kwargs:connected.append(True))
+    with pytest.raises(ValueError,match='非公网'): dl.download(url)
+    assert not connected
