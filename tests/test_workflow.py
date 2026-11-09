@@ -324,14 +324,22 @@ def test_pdf_preview_supports_multiple_pages(monkeypatch):
     import fitz
     monkeypatch.setattr(service, 'recognize', lambda p: ({}, '需要人工确认'))
     doc=fitz.open()
-    doc.new_page(width=200,height=100).insert_text((20,40),'FIRST PAGE')
-    doc.new_page(width=100,height=200).insert_text((20,40),'SECOND PAGE')
+    doc.new_page(width=700,height=350).insert_text((20,40),'FIRST PAGE')
+    doc.new_page(width=350,height=700).insert_text((20,40),'SECOND PAGE')
     contents=doc.tobytes();doc.close()
     ident=client.post('/api/invoices/upload',files=[('files',('two-pages.pdf',contents,'application/pdf'))]).json()[0]['id']
     first=client.get(f'/api/invoices/{ident}/preview')
     second=client.get(f'/api/invoices/{ident}/preview?page=2')
     assert client.get(f'/api/invoices/{ident}/preview?info=true').json()=={'pages':2}
     assert first.status_code==second.status_code==200 and first.content!=second.content
+    from PIL import Image
+    large=client.get(f'/api/invoices/{ident}/preview?page=2&width=3000')
+    with Image.open(io.BytesIO(first.content)) as image:
+        assert image.size==(1200,600)
+    with Image.open(io.BytesIO(large.content)) as image:
+        assert image.size==(1400,2800)
+    for width in (0,599,3201):
+        assert client.get(f'/api/invoices/{ident}/preview?width={width}').status_code==422
     assert client.get(f'/api/invoices/{ident}/preview?page=0').status_code==422
     assert client.get(f'/api/invoices/{ident}/preview?page=3').status_code==404
     assert client.get(f'/api/invoices/{ident}/original').content==contents

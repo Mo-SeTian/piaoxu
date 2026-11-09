@@ -568,7 +568,7 @@ def alternate_original(invoice_id: int, original_id: int):
     return FileResponse(FILES / row['stored_name'],media_type=media,filename=row['original_name'],content_disposition_type='inline' if ext in ('.pdf','.jpg','.jpeg','.png') else 'attachment',headers={'X-Content-Type-Options':'nosniff'})
 
 @app.get('/api/invoices/{invoice_id}/preview')
-def preview_invoice(invoice_id: int, page: int = Query(1, ge=1), info: bool = False):
+def preview_invoice(invoice_id: int, page: int = Query(1, ge=1), info: bool = False, width: int = Query(1200, ge=600, le=3200)):
     with connect() as db:
         row = db.execute('SELECT stored_name FROM invoices WHERE id=?',(invoice_id,)).fetchone()
     if not row or not (FILES / row['stored_name']).is_file(): raise HTTPException(404,'原件不存在')
@@ -579,7 +579,7 @@ def preview_invoice(invoice_id: int, page: int = Query(1, ge=1), info: bool = Fa
             if info: return {'pages':document.page_count}
             if page > document.page_count: raise HTTPException(404,'预览页码不存在')
             pdf_page = document[page-1]
-            scale = min(2, 1200 / max(pdf_page.rect.width, pdf_page.rect.height))
+            scale = min(4, width / max(pdf_page.rect.width, pdf_page.rect.height))
             image = pdf_page.get_pixmap(matrix=fitz.Matrix(scale,scale),alpha=False).tobytes('png')
     except HTTPException:
         raise

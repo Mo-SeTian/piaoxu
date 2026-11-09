@@ -4,6 +4,47 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)))}
+function previewHarness(expanded=true){
+  const image={style:{}},previous={},next={},label={},scale={},scroll={calls:0,scrollTo(){this.calls++}};
+  const viewer={dataset:{pdfViewer:'9',pdfCurrent:'1',pdfTotal:'2',previewScale:'100'},
+    hasAttribute:()=>expanded,querySelector:selector=>({'img':image,'[data-pdf-step="-1"]':previous,'[data-pdf-step="1"]':next,'[data-pdf-page]':label,'[data-preview-scale-label]':scale,'[data-preview-zoom="-25"]':previous,'[data-preview-zoom="25"]':next,'.document-scroll':scroll}[selector])};
+  const context=vm.createContext({Map,Number,uiMotion:()=>{}});
+  vm.runInContext(section('const pdfPages=new Map();','\nfunction manualInvoicePreview('),context);
+  return {context,viewer,image,previous,next,label,scale,scroll,
+    zoom:value=>context.zoomInvoicePreview({dataset:{previewZoom:String(value)},closest:()=>viewer}),
+    turn:step=>context.turnPdfPage({dataset:{pdfStep:String(step)},closest:()=>viewer})};
+}
+test('large preview zoom is bounded and fit resets the scroll position',()=>{
+  const h=previewHarness();
+  h.zoom(25);assert.equal(h.image.style.width,'125%');assert.equal(h.scale.textContent,'125%');
+  for(let i=0;i<20;i++)h.zoom(25);
+  assert.equal(h.image.style.width,'300%');assert.equal(h.next.disabled,true);
+  for(let i=0;i<20;i++)h.zoom(-25);
+  assert.equal(h.image.style.width,'50%');assert.equal(h.previous.disabled,true);
+  h.zoom('fit');assert.equal(h.image.style.width,'100%');assert.equal(h.scroll.calls,1);
+  assert.equal(h.previous.disabled,false);assert.equal(h.next.disabled,false);
+});
+test('large PDF pagination retains zoom and resolution and stops at the last page',()=>{
+  const h=previewHarness();h.zoom(25);h.turn(1);
+  assert.equal(h.image.src,'/api/invoices/9/preview?page=2&width=3000');
+  assert.equal(h.image.style.width,'125%');assert.equal(h.label.textContent,'第 2 / 2 页');
+  assert.equal(h.next.disabled,true);assert.equal(h.scroll.calls,1);
+  h.turn(1);assert.equal(h.viewer.dataset.pdfCurrent,2);assert.equal(h.scroll.calls,1);
+  const sidebar=previewHarness(false);sidebar.turn(1);
+  assert.equal(sidebar.image.src,'/api/invoices/9/preview?page=2');
+});
+test('desktop invoice clicks open the modal and preserve the row for focus return',()=>{
+  const calls=[],invoice={id:9};
+  const context=vm.createContext({state:{page:'invoices'},dialog:{open:false},
+    content:{querySelector:()=>({focus:()=>calls.push('focus')})},
+    form:{dataset:{submit:'old-action'},querySelector:()=>({remove:()=>calls.push('footer removed')})},
+    render:()=>calls.push('render'),invoicePreview:(value,expanded)=>{assert.equal(value,invoice);assert.equal(expanded,true);return 'large preview'},
+    openDialog:(title,body)=>calls.push([title,body])});
+  vm.runInContext(section('function openInvoicePreview(', '\nfunction zoomInvoicePreview('),context);
+  context.openInvoicePreview(invoice);
+  assert.equal(context.state.preview,9);assert.equal(context.form.dataset.submit,undefined);
+  assert.deepEqual(calls,['render','focus',['发票预览','large preview'],'footer removed']);
+});
 function loadHarness(){
   const counters={renders:0},summary={invoices:0,unreimbursed:0,unreimbursed_amount_cents:0,failed_invoices:0,pending_emails:0};
   const context=vm.createContext({Date,URLSearchParams,Map,Set,console,summary,
