@@ -282,18 +282,27 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,g
         order={'imported_desc':'i.imported_at DESC,i.id DESC','amount_asc':'i.amount_cents IS NULL,i.amount_cents ASC,i.imported_at DESC,i.id DESC','amount_desc':'i.amount_cents IS NULL,i.amount_cents DESC,i.imported_at DESC,i.id DESC'}[sort]
         sql='SELECT i.*,g.name group_name,a.name account_name '+base+where+' ORDER BY '+order
         rows = [dict(r) for r in db.execute(sql+(' LIMIT ? OFFSET ?' if limit is not None else ''),(*args,limit,offset) if limit is not None else args)]
+        import_day_ids = {}
+        if limit is not None and sort=='imported_desc':
+            for row in rows:
+                import_day_ids.setdefault(row['imported_at'][:10],[]).append(row['id'])
+            if rows:
+                # Only boundary dates can continue outside the current page.
+                for day in dict.fromkeys((rows[0]['imported_at'][:10],rows[-1]['imported_at'][:10])):
+                    day_sql='SELECT i.id '+base+where+(' AND ' if where else ' WHERE ')+"substr(i.imported_at,1,10)=? ORDER BY i.id DESC LIMIT 501"
+                    import_day_ids[day]=[item['id'] for item in db.execute(day_sql,(*args,day))]
         by_id = {row['id']:row for row in rows}
         for row in rows: row['mail_sources'] = []; row['other_originals'] = []
         for item in db.execute('SELECT id,invoice_id,original_name FROM invoice_originals ORDER BY id'):
             if item['invoice_id'] in by_id:
                 by_id[item['invoice_id']]['other_originals'].append({'id':item['id'],'name':item['original_name']})
         source_sql='''SELECT ie.invoice_id,e.id email_id,a.id account_id,a.name account_name,a.email account_email FROM invoice_emails ie JOIN emails e ON e.id=ie.email_id JOIN accounts a ON a.id=e.account_id'''
-        if limit is not None and not by_id: return {'items':[],'total':total,'limit':limit,'offset':offset}
+        if limit is not None and not by_id: return {'items':[],'total':total,'limit':limit,'offset':offset,'import_day_ids':import_day_ids}
         if limit is not None: source_sql+=' WHERE ie.invoice_id IN ('+','.join('?'*len(by_id))+')'
         for source in db.execute(source_sql+' ORDER BY e.id',tuple(by_id) if limit is not None else ()):
             if source['invoice_id'] in by_id:
                 by_id[source['invoice_id']]['mail_sources'].append({key:source[key] for key in ('email_id','account_id','account_name','account_email')})
-        return {'items':rows,'total':total,'limit':limit,'offset':offset} if limit is not None else rows
+        return {'items':rows,'total':total,'limit':limit,'offset':offset,'import_day_ids':import_day_ids} if limit is not None else rows
 
 @app.post('/api/invoices/delete')
 def delete_selected_invoices(ids: DeleteInvoices):

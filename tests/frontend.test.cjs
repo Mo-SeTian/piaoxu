@@ -9,6 +9,7 @@ function dateSelectionHarness(total=55){
   const context=vm.createContext({Set,URLSearchParams,selectingDates:false,
     state:{page:'invoices',query:'餐饮',filter:'未报销',selected:new Set([1000]),selectedRecords:new Map([[1000,{id:1000}]])},
     api:async url=>{calls.push(url);return {json:async()=>({items,total})}}});
+  vm.runInContext(section('function isImportDaySelected(', '\nfunction invoicePage('),context);
   vm.runInContext(section('async function selectInvoiceDates(', '\nasync function submitInvoiceDateSelection('),context);
   return {context,calls,run:()=>context.selectInvoiceDates('2026-11-09','2026-11-10')};
 }
@@ -18,6 +19,24 @@ test('date selection includes invoices beyond the visible page and preserves ear
   assert.equal(query.get('limit'),'500');assert.equal(query.get('query'),'餐饮');assert.equal(query.get('reimbursement'),'unreimbursed');
   assert.equal(query.get('imported_from'),'2026-11-09');assert.equal(query.get('imported_to'),'2026-11-10');
   assert.equal(h.context.state.selected.size,56);assert.equal(h.context.state.selectedRecords.size,56);
+});
+test('day toggle selects and cancels every matching page while preserving other dates',async()=>{
+  const h=dateSelectionHarness();
+  h.context.state.invoiceDayIds={'2026-11-10':Array.from({length:55},(_,i)=>i+1)};
+  const first=await h.context.toggleImportDay('2026-11-10');
+  assert.equal(first.selected,true);assert.equal(first.count,55);assert.equal(h.context.isImportDaySelected('2026-11-10'),true);
+  const second=await h.context.toggleImportDay('2026-11-10');
+  assert.equal(second.selected,false);assert.equal(second.count,55);
+  assert.deepEqual([...h.context.state.selected],[1000]);assert.deepEqual([...h.context.state.selectedRecords.keys()],[1000]);
+  assert.equal(h.context.isImportDaySelected('2026-11-10'),false);assert.equal(h.calls.length,1);
+  await h.context.toggleImportDay('2026-11-10');
+  h.context.state.selected.delete(1);h.context.state.selectedRecords.delete(1);
+  assert.equal(h.context.isImportDaySelected('2026-11-10'),false);
+  const partial=await h.context.toggleImportDay('2026-11-10');
+  assert.equal(partial.selected,true);assert.equal(h.context.state.selected.size,56);
+  h.context.selectingDates=true;
+  await assert.rejects(h.context.toggleImportDay('2026-11-10'),/正在选择/);
+  assert.equal(h.context.state.selected.size,56);
 });
 test('excessive date matches and changed filters leave the existing selection intact',async()=>{
   const excessive=dateSelectionHarness(501);await assert.rejects(excessive.run(),/500/);

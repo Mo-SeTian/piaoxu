@@ -682,7 +682,14 @@ def test_invoice_and_email_pagination_filters(isolated_storage):
     first=client.get('/api/invoices',params={'limit':50}).json();second=client.get('/api/invoices',params={'limit':50,'offset':50}).json()
     assert first['total']==second['total']==55 and len(first['items'])==50 and len(second['items'])==5
     assert not {x['id'] for x in first['items']} & {x['id'] for x in second['items']}
+    all_ids={x['id'] for x in first['items']+second['items']}
+    assert set(first['import_day_ids']['2026-01-01'])==all_ids
+    assert set(second['import_day_ids']['2026-01-01'])==all_ids
     assert client.get('/api/invoices',params={'limit':50,'reimbursement':'reimbursed'}).json()['total']==27
+    paid=client.get('/api/invoices',params={'limit':50,'reimbursement':'reimbursed'}).json()
+    assert set(paid['import_day_ids']['2026-01-01'])=={x['id'] for x in paid['items']}
+    searched=client.get('/api/invoices',params={'limit':50,'query':'商户42'}).json()
+    assert searched['import_day_ids']['2026-01-01']==[searched['items'][0]['id']]
     assert client.get('/api/invoices',params={'limit':50,'query':'商户42'}).json()['total']==1
     assert client.get('/api/invoices',params={'limit':50,'query':'%'}).json()['total']==0
     messages=client.get('/api/emails',params={'limit':50,'offset':50,'account_id':account,'invoice_status':'none'}).json()
