@@ -176,6 +176,7 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .amount{text-align:right;font-weight:500;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
 .invoice-status{white-space:nowrap;font-size:12px}.invoice-status .status{padding:4px 7px;font-size:11px}
 .invoice-list-footer{display:flex;justify-content:space-between;gap:12px;padding:18px 0;color:var(--muted);font-size:11px}
+.selection-bar .selection-short{display:none}
 .selection-bar{position:sticky;z-index:4;bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;margin-top:12px;padding:14px 16px;border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:0 5px 24px #17191c0a}
 .selection-summary{display:grid;gap:3px;min-width:0;line-height:1.5}.selection-summary strong{font-size:13px;font-weight:500;white-space:nowrap}.selection-summary span{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .selection-actions{display:flex;align-items:center;gap:8px}.selection-actions .button{min-height:36px;padding:8px 12px;font-size:12px}
@@ -307,9 +308,8 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   .invoice-table .check-cell{grid-column:1;grid-row:1/3}.invoice-table .check-cell .check-hit{margin-top:-10px}.invoice-table .name-cell{grid-column:2;grid-row:1}.invoice-table td.invoice-date{display:block;grid-column:2;grid-row:2;align-self:center;text-align:left;line-height:1.6}.invoice-table td.invoice-date:before{content:"开票 "}.invoice-table .amount{grid-column:3;grid-row:1;text-align:right;align-self:start;font-size:14px;line-height:1.65}.invoice-table .invoice-status{display:flex;grid-column:3;grid-row:2;align-self:center;justify-content:flex-end;line-height:1.6}.invoice-table .invoice-status .status{font-size:12px;line-height:1.6;padding:3px 8px}
   .invoice-table .invoice-row.wide-amount{grid-template-rows:auto auto auto}.invoice-row.wide-amount .check-cell{grid-row:1/4}.invoice-row.wide-amount .name-cell{grid-column:2/-1;grid-row:1}.invoice-row.wide-amount .amount{grid-column:2/-1;grid-row:2}.invoice-row.wide-amount .invoice-date,.invoice-row.wide-amount .invoice-status{grid-row:3}
   .invoice-name strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere;font-size:14px;line-height:1.65}.invoice-name span{font-size:11px}.check-hit{width:32px;min-height:44px;margin-top:-4px}.check-hit input{width:18px;height:18px}
-  .invoice-list-footer{font-size:11px}.invoice-list.has-selection{padding-bottom:150px}
-  .selection-bar{position:fixed;z-index:20;left:12px;right:12px;bottom:calc(var(--mobile-nav-height) + 10px);display:grid;grid-template-columns:minmax(0,1fr);justify-content:stretch;align-items:stretch;gap:10px;margin:0;padding:14px;border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:0 5px 24px #17191c12}
-  .selection-summary{display:flex;justify-content:space-between;gap:10px;align-items:center}.selection-summary strong{font-size:12px;flex:none}.selection-summary span{min-width:0;font-size:12px;text-align:right;white-space:normal;overflow-wrap:anywhere}.selection-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(44px,auto);gap:8px}.selection-actions>.button,.selection-actions>.export-menu,.export-menu summary{width:100%}.selection-actions .button{min-height:44px;padding:8px 7px;font-size:12px}
+  .invoice-list-footer{font-size:11px}
+
   .grid,.fields{grid-template-columns:1fr;gap:18px}.field.full{grid-column:auto}.box{padding:22px}.group .actions{padding-top:22px}.group h2{font-size:25px}
   .row,.failed-invoice,.account-row{display:flex;flex-direction:column;align-items:stretch;gap:9px}.list-box .row{padding:20px 0}.list-box .row>strong{padding-top:0}.row .actions,.account-row .actions{justify-content:flex-start;margin-top:4px}.failed-invoice .actions .button{min-height:40px;font-size:12px;padding:8px 13px}
   .email-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 12px}.email-row>strong{grid-column:1;grid-row:1;font-size:12px}.email-row>div:not(.email-row-meta){grid-column:1;grid-row:2}.email-row .email-row-meta{grid-column:2;grid-row:1/3;gap:12px;max-width:84px}.email-row .email-row-meta .button{font-size:11px;padding:8px 10px;min-height:40px}.email-row-meta .muted{font-size:11px}.email-labels{gap:5px}.email-tag{font-size:11px;padding:3px 7px}
@@ -320,7 +320,6 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   dialog{width:calc(100% - 20px);max-height:calc(100dvh - 24px);border-radius:24px}dialog form{padding:22px}dialog:has(.manual-preview),dialog:has(.upload-preview-list),dialog:has(.email-body){width:calc(100% - 20px)}.dialog-head{gap:12px;margin-bottom:20px}.dialog-head h2{font-size:26px;line-height:1.6}.dialog-head .icon-button{margin-top:-5px;margin-right:-8px}.dialog-actions{gap:9px;margin-top:24px}
   .preview-fields{grid-template-columns:70px minmax(0,1fr);gap:14px 12px}.preview-head h2{font-size:25px}.pdf-pager .button{width:44px;min-height:44px}.manual-preview-header{font-size:12px;padding:12px}.manual-preview-text{padding:12px}.manual-preview-note{font-size:11px}
   .group-detail-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}.group-detail-row>span:first-child{grid-column:1;grid-row:1}.group-detail-row>span:nth-child(2){grid-column:1;grid-row:2;color:var(--muted);font-size:12px}.group-detail-row>strong{grid-column:2;grid-row:1/3;text-align:right;font-variant-numeric:tabular-nums}
-  .toast{left:16px;right:16px;max-width:none;bottom:calc(var(--mobile-nav-height) + 12px);font-size:12px;text-align:center;border-radius:20px}body:has(.selection-bar) .toast{bottom:calc(var(--mobile-nav-height) + 150px)}
   .login-screen{padding:18px}.login-panel{padding:28px 24px}.login-brand{margin-bottom:30px}
 }
 @media(max-width:640px), (orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
@@ -334,6 +333,15 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   .shell>aside.menu-open #main-nav{visibility:visible;transform:translateY(0);transition:transform var(--motion-panel) var(--ease)}
   #nav-backdrop:not([hidden]){display:block;position:fixed;z-index:31;inset:0;background:#17191c40}body.nav-open{overflow:hidden}
   main{padding-bottom:var(--mobile-nav-height)}main>header{display:none}.invoice-preview{display:none}.invoice-layout{display:block}.content{padding-top:calc(22px + env(safe-area-inset-top,0px))}
+}
+@media(max-width:640px),(orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
+  .invoice-list.has-selection{padding-bottom:76px}
+  .selection-bar{position:fixed;z-index:20;left:0;right:0;bottom:var(--mobile-nav-height);display:flex;flex-wrap:nowrap;align-items:center;justify-content:space-between;gap:10px;min-height:60px;margin:0;padding:7px 12px;border:0;border-top:1px solid var(--line);border-radius:0;background:var(--surface);box-shadow:0 -3px 12px #17191c08}
+  .selection-bar .selection-full{display:none}.selection-bar .selection-short{display:block}
+  .selection-summary{display:grid;gap:1px;min-width:0;flex:1;line-height:1.4}.selection-summary strong{font-size:12px}.selection-summary>span{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .selection-actions{display:flex;align-items:center;gap:6px;flex:none}.selection-actions .button{min-width:44px;min-height:44px;padding:8px 10px;font-size:12px;white-space:nowrap}
+  .selection-bar .export-options button{min-height:44px}.selection-bar .export-options .danger{color:var(--brown)}
+  .toast{left:0;right:0;top:calc(12px + env(safe-area-inset-top,0px));bottom:auto;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:9px 14px;border-radius:12px;font-size:12px;text-align:center;overflow-wrap:anywhere}
 }
 @media(max-width:360px){.invoice-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.invoice-metrics strong.metric-amount{font-size:24px}.invoice-metrics strong{font-size:21px}.invoice-metrics small{font-size:11px;margin-left:3px}.review-summary{padding:13px}.review-summary strong{font-size:12px}.review-summary small{font-size:11px;margin-left:6px}.selection-actions{gap:6px}.selection-actions .button{font-size:12px;padding-inline:5px}}
 dialog:has(.merge-comparison){width:min(760px,calc(100% - 32px))}
