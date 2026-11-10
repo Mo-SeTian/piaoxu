@@ -343,7 +343,7 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   .selection-bar .export-options button{min-height:44px}.selection-bar .export-options .danger{color:var(--brown)}
   .toast{left:0;right:0;top:calc(12px + env(safe-area-inset-top,0px));bottom:auto;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:9px 14px;border-radius:12px;font-size:12px;text-align:center;overflow-wrap:anywhere}
 }
-@media(max-width:360px){.invoice-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.invoice-metrics strong.metric-amount{font-size:24px}.invoice-metrics strong{font-size:21px}.invoice-metrics small{font-size:11px;margin-left:3px}.review-summary{padding:13px}.review-summary strong{font-size:12px}.review-summary small{font-size:11px;margin-left:6px}.selection-actions{gap:6px}.selection-actions .button{font-size:12px;padding-inline:5px}}
+@media(max-width:360px){.head h1{font-size:28px}.invoice-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.invoice-metrics strong.metric-amount{font-size:24px}.invoice-metrics strong{font-size:21px}.invoice-metrics small{font-size:11px;margin-left:3px}.review-summary{padding:13px}.review-summary strong{font-size:12px}.review-summary small{font-size:11px;margin-left:6px}.selection-actions{gap:6px}.selection-actions .button{font-size:12px;padding-inline:5px}}
 dialog:has(.merge-comparison){width:min(760px,calc(100% - 32px))}
 .merge-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}
 .merge-comparison section{min-width:0;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--fog)}
