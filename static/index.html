@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>票序 · 发票管理</title>
   <link rel="preload" href="/fonts/noto-serif-sc-ui.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/style.css?v=36">
+  <link rel="stylesheet" href="/style.css?v=37">
 </head>
 <body data-input-mode="pointer">
   <section class="login-screen" id="login-screen" hidden>
@@ -39,18 +39,12 @@
         <button data-page="settings"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#settings"></use></svg>偏好设置</button>
       </nav>
       <div class="side-foot" id="side-foot">还未连接邮箱</div>
-      <nav class="mobile-nav" aria-label="移动端导航">
-        <button type="button" data-page="invoices"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg><span>发票</span></button>
-        <button type="button" data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#folder"></use></svg><span>报销组</span></button>
-        <button type="button" data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail"></use></svg><span>邮件</span></button>
-        <button type="button" id="mobile-more" aria-expanded="false" aria-controls="main-nav"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#ellipsis"></use></svg><span>更多</span></button>
-      </nav>
     </aside>
     <div id="nav-backdrop" hidden aria-hidden="true"></div>
     <main><header><span id="breadcrumb">发票库</span></header><div class="content" id="content"></div></main>
   </div>
   <dialog id="dialog" aria-labelledby="dialog-title"><form method="dialog" id="dialog-form"></form></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=41" defer></script>
+  <script src="/app.js?v=42" defer></script>
 </body>
 </html>
