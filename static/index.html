@@ -4,13 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>票序 · 发票管理</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=1">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=1">
   <link rel="preload" href="/fonts/noto-serif-sc-ui.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/style.css?v=44">
+  <link rel="stylesheet" href="/style.css?v=45">
 </head>
 <body data-input-mode="pointer">
   <section class="login-screen" id="login-screen" hidden>
     <div class="login-panel">
-      <div class="login-brand"><svg class="brand-icon" aria-hidden="true"><use href="/icons.svg?v=6#files"></use></svg><span>票序</span></div>
+      <div class="login-brand"><img class="brand-icon" src="/brand-icon.png?v=1" width="40" height="40" alt=""><span>票序</span></div>
       <h1>登录票序</h1>
       <p class="login-intro">收好每一张发票，理清每一笔支出。</p>
       <form id="login-form">
@@ -25,7 +27,7 @@
   <div class="shell" hidden>
     <aside>
       <button id="nav-toggle" class="icon-button" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="展开菜单"><svg aria-hidden="true" class="nav-icon menu-icon"><use href="/icons.svg?v=6#menu"></use></svg></button>
-      <div class="brand"><svg class="brand-icon" aria-hidden="true"><use href="/icons.svg?v=6#files"></use></svg><span>票序</span></div>
+      <div class="brand"><img class="brand-icon" src="/brand-icon.png?v=1" width="40" height="40" alt=""><span>票序</span></div>
       <div class="nav-label">票据管理</div>
       <nav id="main-nav" aria-label="主导航">
         <button data-page="invoices" class="active"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg>发票库</button>
