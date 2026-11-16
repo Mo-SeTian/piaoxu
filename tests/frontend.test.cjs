@@ -55,6 +55,35 @@ test('amount display preserves global server order instead of regrouping by date
   assert.ok(html.indexOf('data-preview="1"')<html.indexOf('data-preview="2"'));
   assert.ok(html.indexOf('data-preview="2"')<html.indexOf('data-preview="3"'));
   assert.doesNotMatch(html,/class="date-row"/);assert.match(html,/金额从低到高/);
+  assert.match(html,/class="invoice-sort export-menu"/);assert.doesNotMatch(html,/<select id="invoice-sort"/);
+  assert.match(html,/data-invoice-sort="amount_asc" aria-pressed="true"/);
+});
+test('invoice list only focuses and previews an explicitly chosen invoice',()=>{
+  const rows=[1,2].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:100,invoice_date:'2026-11-16',imported_at:'2026-11-16'})),previews=[];
+  const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),preview:null,filter:'全部',query:'',invoiceCount:2,invoiceTotal:2,unpaidCount:2,unpaidAmount:200,reviewCount:0},
+    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',listPager:()=>'',invoicePreview:current=>{previews.push(current?.id??null);return ''}});
+  vm.runInContext(section('function isImportDaySelected(', '\nfunction groupPage('),context);
+  assert.doesNotMatch(context.invoicePage(),/\bfocused\b|\bis-selected\b/);assert.equal(previews.pop(),null);
+  context.state.preview=2;
+  const focused=context.invoicePage().match(/<tr class="invoice-row[^"\n]*\bfocused\b[^"\n]*">[\s\S]*?<\/tr>/g)||[];
+  assert.equal(focused.length,1);assert.match(focused[0],/data-preview="2"/);assert.equal(previews.pop(),2);
+  context.state.preview=99;
+  assert.doesNotMatch(context.invoicePage(),/\bfocused\b/);assert.equal(previews.pop(),null);
+  context.state.preview=null;context.state.selected.add(1);context.state.selectedRecords.set(1,rows[0]);
+  const selected=context.invoicePage();
+  assert.match(selected,/\bis-selected\b/);assert.doesNotMatch(selected,/\bfocused\b/);assert.equal(previews.pop(),null);
+});
+test('sort choices reset pagination, preserve filters and selection, and close the menu',async()=>{
+  const menu={open:true},calls=[],button={dataset:{invoiceSort:'amount_asc'},closest:()=>menu};
+  const context=vm.createContext({state:{invoiceSort:'imported_desc',invoicePage:3,query:'餐饮',filter:'未报销',selected:new Set([9])},
+    load:async()=>calls.push('load'),content:{querySelector:()=>({focus:()=>calls.push('focus')})},toast:message=>calls.push(message)});
+  vm.runInContext(section('async function handleClick(', "\ndocument.addEventListener('click',handleClick)"),context);
+  await context.handleClick({target:{closest:()=>button}});
+  assert.equal(menu.open,false);assert.equal(context.state.invoiceSort,'amount_asc');assert.equal(context.state.invoicePage,0);
+  assert.equal(context.state.query,'餐饮');assert.equal(context.state.filter,'未报销');assert.deepEqual([...context.state.selected],[9]);
+  assert.deepEqual(calls,['load','focus']);
+  menu.open=true;await context.handleClick({target:{closest:()=>button}});
+  assert.equal(menu.open,false);assert.deepEqual(calls,['load','focus','focus']);
 });
 function exportHarness(){
   const controls=[{disabled:false},{disabled:true}],link={clicks:0,click(){this.clicks++}},done={},messages=[],calls=[];

@@ -164,7 +164,7 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .search-field.has-value .search-clear{display:inline-flex}
 .search-field.has-value input{padding-right:24px}
 .invoice-tools{display:flex;align-items:center;gap:8px;flex:none;min-width:0}.invoice-tools>.button{font-size:12px;padding:8px 12px}
-.invoice-sort{position:relative;display:block;width:fit-content;flex:none}.invoice-sort-value{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border:1px solid var(--control);border-radius:999px;background:var(--surface);color:var(--ink);font-size:12px;white-space:nowrap}.invoice-sort-value .button-icon{width:12px;height:12px}.invoice-sort select{position:absolute;inset:0;width:100%;height:100%;min-width:0;padding:0;opacity:0;font-size:16px;cursor:pointer}body:not([data-input-mode="pointer"]) .invoice-sort:has(select:focus-visible) .invoice-sort-value{outline:2px solid var(--focus);outline-offset:2px}
+.invoice-sort{position:relative;display:block;width:fit-content;flex:none}.invoice-sort-value{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border:1px solid var(--control);border-radius:999px;background:var(--surface);color:var(--ink);font-size:12px;white-space:nowrap}.invoice-sort-value .button-icon{width:12px;height:12px}.invoice-sort-value:hover,.invoice-sort[open] .invoice-sort-value{background:var(--fog)}.invoice-sort[open] .invoice-sort-value .button-icon{transform:rotate(180deg)}
 .invoice-table{border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}
 .invoice-table table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;text-align:left}
 .col-check{width:44px}.col-date{width:105px}.col-amount{width:152px}.col-status{width:88px}
@@ -215,6 +215,10 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .export-options{position:absolute;z-index:8;right:0;bottom:calc(100% + 8px);width:192px;padding:7px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 8px 24px #17191c14}
 .export-options button{display:block;width:100%;min-height:40px;padding:9px 11px;border:0;border-radius:11px;background:var(--surface);text-align:left;color:var(--ink);font-size:12px}.export-options button:hover{background:var(--mist)}
 .export-note{padding:6px 11px;color:var(--muted);font-size:11px;line-height:1.7}
+.invoice-sort-options{top:calc(100% + 8px);bottom:auto}
+.invoice-sort-options button{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:44px;font-size:13px;white-space:nowrap}
+.invoice-sort-options button[aria-pressed="true"]{font-weight:500}
+.invoice-sort-options button:after{content:"";width:8px;height:5px;flex:none;border-left:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);visibility:hidden}.invoice-sort-options button[aria-pressed="true"]:after{visibility:visible}
 .invoice-preview{min-width:0;padding:22px;background:var(--surface);border:1px solid var(--line);border-radius:20px}
 .preview-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:30px;color:var(--muted);font-size:12px}
 .preview-head{margin-top:17px}.preview-head h2{font:400 25px/1.5 var(--serif);overflow-wrap:anywhere}.preview-head p{margin-top:5px;color:var(--muted);font-size:11px;overflow-wrap:anywhere;line-height:1.7}
