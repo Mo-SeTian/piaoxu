@@ -245,6 +245,14 @@ function openInvoicePreview(invoice){
   openDialog('发票预览',invoicePreview(invoice,true));
   form.querySelector('.dialog-actions').remove();delete form.dataset.submit;
 }
+function clearInvoicePreview(){
+  if(state.page!=='invoices'||state.preview===null)return;
+  state.preview=null;
+  renderedPreview=null;
+  content.querySelector('.invoice-row.focused')?.classList.remove('focused');
+  const panel=content.querySelector('.invoice-preview');
+  if(panel)panel.innerHTML=invoicePreview();
+}
 function zoomInvoicePreview(button){
   const viewer=button.closest('[data-document-viewer]'),image=viewer?.querySelector('img');if(!image)return;
   const zoom=button.dataset.previewZoom==='fit'?100:Math.max(50,Math.min(300,Number(viewer.dataset.previewScale||100)+Number(button.dataset.previewZoom)));
@@ -511,6 +519,11 @@ document.addEventListener('click',handleClick);
 document.addEventListener('error',e=>{if(e.target.matches?.('.preview-document img,.document-canvas img')){const viewer=e.target.closest('[data-document-viewer]');viewer?.querySelectorAll('[data-preview-zoom]').forEach(button=>button.disabled=true);const message=document.createElement('div');message.className='preview-unavailable';message.textContent='预览暂不可用，请打开原件查看';e.target.replaceWith(message)}},true);
 document.addEventListener('click',e=>{if(!e.target.closest('.shell > aside')&&document.querySelector('#nav-toggle').getAttribute('aria-expanded')==='true'){closeNav();document.querySelector('#nav-toggle').focus({preventScroll:true})}});
 document.addEventListener('click',e=>{if(!e.target.closest('.export-menu'))document.querySelectorAll('.export-menu[open]').forEach(menu=>menu.open=false)});
+document.addEventListener('click',e=>{
+  if(!dialog.open&&!e.target.closest('dialog,.invoice-row,.invoice-preview,button,summary,a,label,input,select,textarea')){
+    clearInvoicePreview();
+  }
+});
 document.addEventListener('focusin',e=>{const menu=document.querySelector('.invoice-sort[open]');if(menu&&!menu.contains(e.target))menu.open=false});
 document.addEventListener('keydown',e=>{
   const menu=e.target.closest('.invoice-sort');if(!menu||!['ArrowDown','ArrowUp','Home','End'].includes(e.key))return;
@@ -530,7 +543,9 @@ dialog.addEventListener('click',e=>{
   if(form.dataset.uploading==='1')return;
   const rect=dialog.getBoundingClientRect();
   const isInDialog=rect.top<=e.clientY&&e.clientY<=rect.top+rect.height&&rect.left<=e.clientX&&e.clientX<=rect.left+rect.width;
-  if(!isInDialog)dialog.close();
+  if(isInDialog)return;
+  dialog.close();
+  if(form.querySelector('.preview-workspace'))clearInvoicePreview();
 });
 dialog.addEventListener('close',()=>{pendingUpload=[];pendingRestore=null;pendingMerge=null;delete form.dataset.uploading});
 form.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(form);const type=form.dataset.submit;try{if(type==='select-invoice-dates'){await submitInvoiceDateSelection(f);return}if(type==='merge-invoices'){await submitInvoiceMerge();return}if(type==='notification-save'||type==='notification-delete'){await submitNotification(type,f);return}if(type==='delete-invoices'){const items=[...pendingDelete],ids=items.map(item=>item.id),button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在删除…';try{const result=await (await api('/api/invoices/delete',{method:'POST',body:JSON.stringify({items})})).json();delete form.dataset.uploading;dialog.close();ids.forEach(id=>{state.selected.delete(id);state.selectedRecords.delete(id)});state.preview=null;ids.forEach(id=>pdfPages.delete(id));try{await load()}catch{toast('已删除，请刷新页面查看');return}toast(result.cleanup_pending?'发票已删除，部分原件未清理，请检查权限并重启':'已删除发票')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='删除发票';throw error}return}if(type==='restore-backup'){if(!pendingRestore)return;const data=new FormData();data.append('file',pendingRestore);const button=form.querySelector('[type=submit]'),controls=[...form.querySelectorAll('button,input')].map(el=>[el,el.disabled]);form.dataset.uploading='1';controls.forEach(([el])=>el.disabled=true);button.textContent='正在恢复…';try{const restored=await (await api('/api/backup/restore',{method:'POST',body:data})).json();delete form.dataset.uploading;dialog.close();showLogin(restored.recovery_incomplete?'备份已恢复。恢复前的数据不完整，已保留原始副本。请使用备份中的账号密码登录。':'备份已恢复，请使用备份中的账号密码重新登录。')}catch(error){delete form.dataset.uploading;controls.forEach(([el,disabled])=>el.disabled=disabled);button.textContent='确认恢复';throw error}return}if(type==='upload-preview'){const selected=[...form.querySelectorAll('[data-upload-choice]:checked')].map(input=>pendingUpload[Number(input.dataset.uploadChoice)]);if(selected.length)await importUpload(selected);return}if(type==='invoice'){const amount=f.get('amount');await api(`/api/invoices/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({buyer:f.get('buyer'),seller:f.get('seller'),amount_cents:amount===''?null:Math.round(Number(amount)*100),invoice_date:f.get('invoice_date')||null,invoice_number:f.get('invoice_number'),export_name:f.get('export_name')})})}if(type==='credentials'){await api(`/api/accounts/${form.dataset.id}`,{method:'PATCH',body:JSON.stringify({auth_code:f.get('auth_code')})})}if(type==='account'){const account=await (await api('/api/accounts',{method:'POST',body:JSON.stringify(Object.fromEntries(f))})).json();await api(`/api/accounts/${account.id}/sync`,{method:'POST'})}if(type==='group'){await api('/api/groups',{method:'POST',body:JSON.stringify({name:f.get('name'),ids:[...state.selected]})});clearSelection();navigate('groups')}dialog.close();await load();toast(type==='account'?'邮箱已添加，正在首次同步':'已保存')}catch(err){form.querySelector('.inline-error').textContent=err.message}});
