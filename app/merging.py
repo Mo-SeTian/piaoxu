@@ -5,6 +5,8 @@ from pathlib import Path
 def merge_records(db, source, target):
     from .service import fill_tax_ids
     fill_tax_ids(db, target['id'], dict(source))
+    db.execute('INSERT OR IGNORE INTO invoice_tags(invoice_id,tag_id) SELECT ?,tag_id FROM invoice_tags WHERE invoice_id=?',
+               (target['id'],source['id']))
     db.execute('INSERT INTO invoice_originals(invoice_id,sha256,original_name,stored_name) VALUES(?,?,?,?)',
                (target['id'],source['sha256'],source['original_name'],source['stored_name']))
     db.execute('UPDATE invoice_originals SET invoice_id=? WHERE invoice_id=?',(target['id'],source['id']))

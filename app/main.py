@@ -37,6 +37,7 @@ from . import auth
 from .deletion import delete_invoices, recover_deletions
 from .merging import merge_records
 from . import notifications, export_downloads
+from .tags import router as tag_router, add_invoice_tags
 
 with storage_lock_sync(exclusive=True):
     recover_interrupted_restore()
@@ -77,6 +78,7 @@ async def lifespan(app):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(tag_router)
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
@@ -265,15 +267,23 @@ async def restore_backup_file(file: UploadFile = File(...)):
         await file.close()
 
 @app.get('/api/invoices')
-def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,ge=0), query: str='', reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all', sort: Literal['imported_desc','amount_asc','amount_desc']='imported_desc', imported_from: Optional[date]=None, imported_to: Optional[date]=None):
+def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,ge=0), query: str='', reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all', sort: Literal['imported_desc','amount_asc','amount_desc']='imported_desc', imported_from: Optional[date]=None, imported_to: Optional[date]=None, tag_id: Optional[list[int]]=Query(None), untagged: bool=False):
     if imported_from and imported_to and imported_from > imported_to:
         raise HTTPException(422,'开始日期不能晚于结束日期')
+    if tag_id and (len(tag_id)>500 or any(ident<=0 for ident in tag_id)):
+        raise HTTPException(422,'标签筛选无效')
     with connect() as db:
         base='''FROM invoices i LEFT JOIN group_invoices gi ON gi.invoice_id=i.id LEFT JOIN groups g ON g.id=gi.group_id LEFT JOIN emails e ON e.id=i.email_id LEFT JOIN accounts a ON a.id=e.account_id'''
         conditions=[];args=[]
         if view=='review': conditions.append("(i.recognition_status='识别失败' OR i.duplicate_state='confirmed' OR i.id IN (SELECT duplicate_of FROM invoices WHERE duplicate_of IS NOT NULL AND (recognition_status='识别失败' OR duplicate_state='confirmed')))")
         if limit is not None: conditions.append("i.recognition_status='已识别'")
         if reimbursement!='all': conditions.append('i.reimbursed=?');args.append(int(reimbursement=='reimbursed'))
+        tag_conditions=[]
+        if tag_id:
+            tag_conditions.append('EXISTS (SELECT 1 FROM invoice_tags it WHERE it.invoice_id=i.id AND it.tag_id IN ('+','.join('?'*len(tag_id))+'))')
+            args.extend(tag_id)
+        if untagged: tag_conditions.append('NOT EXISTS (SELECT 1 FROM invoice_tags it WHERE it.invoice_id=i.id)')
+        if tag_conditions: conditions.append('('+' OR '.join(tag_conditions)+')')
         if imported_from: conditions.append('substr(i.imported_at,1,10)>=?');args.append(imported_from.isoformat())
         if imported_to: conditions.append('substr(i.imported_at,1,10)<=?');args.append(imported_to.isoformat())
         if query:
@@ -285,6 +295,7 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,g
         order={'imported_desc':'i.imported_at DESC,i.id DESC','amount_asc':'i.amount_cents IS NULL,i.amount_cents ASC,i.imported_at DESC,i.id DESC','amount_desc':'i.amount_cents IS NULL,i.amount_cents DESC,i.imported_at DESC,i.id DESC'}[sort]
         sql='SELECT i.*,g.name group_name,a.name account_name '+base+where+' ORDER BY '+order
         rows = [dict(r) for r in db.execute(sql+(' LIMIT ? OFFSET ?' if limit is not None else ''),(*args,limit,offset) if limit is not None else args)]
+        add_invoice_tags(db, rows)
         import_day_ids = {}
         if limit is not None and sort=='imported_desc':
             for row in rows:
@@ -793,7 +804,8 @@ def summary():
         failed=db.execute("SELECT count(*) FROM invoices WHERE recognition_status='识别失败' AND duplicate_state<>'confirmed'").fetchone()[0]
         pending=db.execute("SELECT count(*) FROM emails WHERE status IN ('导入失败','发票链接待处理')").fetchone()[0]
         counts=db.execute("SELECT count(*) total,COALESCE(sum(CASE WHEN reimbursed=0 THEN 1 ELSE 0 END),0) unpaid,COALESCE(sum(CASE WHEN reimbursed=0 THEN amount_cents ELSE 0 END),0) unpaid_amount FROM invoices WHERE recognition_status='已识别'").fetchone()
-    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid'],'unreimbursed_amount_cents':counts['unpaid_amount']}
+        untagged=db.execute("SELECT count(*) FROM invoices i WHERE recognition_status='已识别' AND NOT EXISTS (SELECT 1 FROM invoice_tags it WHERE it.invoice_id=i.id)").fetchone()[0]
+    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid'],'unreimbursed_amount_cents':counts['unpaid_amount'],'untagged_invoices':untagged}
 
 @app.get('/api/emails')
 def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','has','suspected','none','recognized','failed','deleted','duplicate','pending','processing_failed','link_pending']='all', attention: bool=False):

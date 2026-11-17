@@ -1,0 +1,75 @@
+.invoice-layout{display:block}
+.invoice-toolbar .search-field{max-width:390px}
+.col-tags{width:208px}
+.invoice-row{height:100px}
+.invoice-tag-stack{display:grid;grid-template-rows:repeat(2,28px);grid-auto-flow:column;grid-auto-columns:84px;gap:6px 8px;align-content:center;justify-content:start;max-width:100%;min-height:62px;overflow-x:auto;scrollbar-width:thin}
+.tag-chip{display:block;width:84px;height:28px;padding:4px 8px;border:0;border-radius:8px;background:var(--mist);color:var(--ink);font-size:12px;line-height:20px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.invoice-tag-stack>.muted{grid-row:1/-1;align-self:center}
+.invoice-tag-stack:has(>.tag-chip:only-child){grid-template-rows:28px;min-height:28px}
+.tag-filter{position:relative;flex:none}
+.tag-filter>summary{gap:7px;min-height:40px;padding:8px 12px;font-size:12px;white-space:nowrap;list-style:none}
+.tag-filter>summary::-webkit-details-marker{display:none}
+.tag-filter>summary .button-icon{width:14px;height:14px}
+.tag-filter-options{width:264px;padding:16px;max-width:calc(100vw - 40px);text-align:left}
+.tag-filter-options>strong{display:block;margin-bottom:10px;font-weight:500;font-size:13px}
+.tag-search{display:flex;align-items:center;gap:8px;min-width:0;padding:0 10px;border:1px solid var(--control);border-radius:12px;background:var(--surface)}
+.tag-search .button-icon{width:14px;height:14px;color:var(--muted);flex:none}
+.tag-search input{display:block;min-width:0;width:100%;height:38px;padding:6px 0;border:0;outline:0;background:transparent;color:var(--ink);font-size:12px}
+.tag-search:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+.tag-filter-choices,.invoice-tag-choices{max-height:250px;overflow-y:auto;margin-top:8px}
+.tag-option{display:flex;align-items:center;gap:10px;min-height:38px;padding:7px 4px;font-size:12px;cursor:pointer}
+.tag-option>span{min-width:0;overflow-wrap:anywhere;flex:1;line-height:1.6}
+.tag-option small{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.tag-filter-options>button{margin-top:8px;border-top:1px solid var(--line);text-align:center}
+.tag-filter-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;padding:8px 0 16px;color:var(--muted);font-size:12px}
+.tag-filter-chip{display:flex;align-items:center;gap:6px;max-width:180px;min-height:28px;padding:4px 9px;border:0;border-radius:999px;background:var(--mist);color:var(--ink);font-size:12px}
+.tag-filter-chip>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag-filter-chip .button-icon{width:12px;height:12px}
+.tag-management{max-width:900px}
+.tag-create{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:0 12px;margin-bottom:20px}
+.tag-create .field{gap:8px}
+.tag-create .inline-error{grid-column:1/-1}
+.tag-create .inline-error:empty,.tag-rename .inline-error:empty{display:none}
+.tag-manage-head,.tag-manage-row,.tag-rename{display:grid;grid-template-columns:minmax(0,1fr) 100px 160px;align-items:center;gap:16px}
+.tag-manage-head{padding:12px 0;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+.tag-manage-row{min-height:68px;padding:12px 0;border-bottom:1px solid var(--line);font-size:13px}
+.tag-management-name{min-width:0;max-width:100%}
+.tag-manage-row .actions{justify-content:flex-start;gap:22px}
+.tag-manage-row .actions .text-button{font-size:12px;min-height:32px}
+.tag-rename{grid-column:1/-1}
+.tag-rename input{min-width:0;width:100%;height:40px;padding:8px 10px;border:1px solid var(--control);border-radius:10px;background:var(--surface);color:var(--ink)}
+.tag-rename .inline-error{grid-column:1/-1;margin:0}
+.tag-management-help{margin-top:18px}
+.invoice-tags-section{padding:16px 0;margin-bottom:16px;border-bottom:1px solid var(--line)}
+.invoice-tags-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}
+.invoice-tags-heading h3{margin:0;font-size:13px;font-weight:500}
+.invoice-tags-heading .text-button{gap:5px}
+.preview-tags{display:flex;gap:6px;flex-wrap:wrap}
+.preview-tag{max-width:100%;padding:4px 9px;border-radius:8px;background:var(--mist);color:var(--ink);font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.invoice-tag-editor{margin-top:12px}
+.tag-create-choice{gap:5px;text-align:left;max-width:100%;line-height:1.8}
+.tag-create-choice>span{overflow-wrap:anywhere;min-width:0}
+@media(min-width:641px) and (max-width:1120px){
+  .col-tags{width:124px}.col-amount{width:112px}.invoice-tools{gap:6px}.invoice-toolbar{flex-wrap:wrap}.invoice-toolbar .search-field{max-width:none;flex-basis:100%}.invoice-tools{margin-left:auto}
+}
+@media(max-width:640px){
+  .invoice-toolbar .search-field{max-width:none}
+  .invoice-tools{gap:6px;justify-content:space-between}.invoice-tools>.button,.tag-filter>summary,.invoice-sort-value{padding-inline:8px;font-size:11px;min-height:44px}
+  .tag-filter>summary{gap:4px}.tag-filter>summary>.button-icon:first-child{display:none}
+  .tag-filter-options{left:0;right:auto}
+  .tag-search input{font-size:16px;height:42px}.tag-option{min-height:44px;font-size:13px}
+  .invoice-table .invoice-row{grid-template-rows:auto auto auto}
+  .invoice-table .invoice-tags-cell{grid-column:2/-1;grid-row:3;margin-top:7px}
+  .invoice-table .check-cell{grid-row:1/-1}
+  .invoice-table .invoice-row.wide-amount{grid-template-rows:auto auto auto auto}
+  .invoice-table .invoice-row.wide-amount .invoice-tags-cell{grid-row:4}
+  .invoice-tag-stack{width:100%;grid-auto-columns:84px;min-height:28px;grid-template-rows:repeat(2,28px)}
+  .invoice-tag-stack:has(>.tag-chip:only-child){grid-template-rows:28px}
+  .invoice-tag-stack:has(>.muted:only-child){display:none}
+  .tag-filter-strip{font-size:11px;gap:6px}.tag-filter-strip .text-button{min-height:36px}.tag-filter-chip{min-height:36px;max-width:140px}
+  .tag-management{padding:20px 16px}.tag-create{gap:8px}.tag-create input,.tag-rename input{font-size:16px}
+  .tag-manage-head,.tag-manage-row,.tag-rename{grid-template-columns:minmax(0,1fr) 52px 108px;gap:8px}
+  .tag-manage-row .actions{gap:12px}.tag-manage-row .actions .text-button{min-height:44px}
+  .tag-rename{grid-template-columns:minmax(0,1fr) auto}.tag-rename>input{grid-column:1/-1}.tag-rename>.actions{justify-content:flex-end}
+  .invoice-tags-heading .text-button,.invoice-tag-editor .button{min-height:44px}
+}

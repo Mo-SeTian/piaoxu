@@ -8,6 +8,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=1">
   <link rel="preload" href="/fonts/noto-serif-sc-ui.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css?v=47">
+  <link rel="stylesheet" href="/tags.css?v=1">
 </head>
 <body data-input-mode="pointer">
   <section class="login-screen" id="login-screen" hidden>
@@ -35,6 +36,7 @@
         <button data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail"></use></svg>全部邮件</button>
         <button data-page="failed"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#circle-alert"></use></svg>识别失败 <b id="failed-count"></b></button>
         <span class="nav-section-label">管理</span>
+        <button data-page="tags"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=9#tag"></use></svg>标签管理</button>
         <button data-page="accounts"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail-plus"></use></svg>邮箱管理</button>
         <button data-page="ai"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#scan-text"></use></svg>AI 辅助识别</button>
         <button data-page="notifications"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=7#bell"></use></svg>消息推送</button>
@@ -47,6 +49,7 @@
   </div>
   <dialog id="dialog" aria-labelledby="dialog-title"><form method="dialog" id="dialog-form"></form></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=49" defer></script>
+  <script src="/tags.js?v=1" defer></script>
+  <script src="/app.js?v=50" defer></script>
 </body>
 </html>

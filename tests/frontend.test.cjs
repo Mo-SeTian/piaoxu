@@ -4,13 +4,16 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)))}
+const tagSource=fs.readFileSync(require('node:path').join(__dirname,'../static/tags.js'),'utf8');
+const tagContexts=new WeakSet();
+function withTagHelpers(context){if(!tagContexts.has(context)){vm.runInContext(tagSource.slice(0,tagSource.indexOf("\ndocument.addEventListener('click'")),context);tagContexts.add(context)}}
 function dateSelectionHarness(total=55){
   const calls=[],items=Array.from({length:Math.min(total,500)},(_,i)=>({id:i+1,amount_cents:100}));
   const context=vm.createContext({Set,URLSearchParams,selectingDates:false,
     state:{page:'invoices',query:'餐饮',filter:'未报销',selected:new Set([1000]),selectedRecords:new Map([[1000,{id:1000}]])},
     api:async url=>{calls.push(url);return {json:async()=>({items,total})}}});
-  vm.runInContext(section('function isImportDaySelected(', '\nfunction invoicePage('),context);
-  vm.runInContext(section('async function selectInvoiceDates(', '\nasync function submitInvoiceDateSelection('),context);
+  withTagHelpers(context);vm.runInContext(section('function isImportDaySelected(', '\nfunction invoicePage('),context);
+  withTagHelpers(context);vm.runInContext(section('async function selectInvoiceDates(', '\nasync function submitInvoiceDateSelection('),context);
   return {context,calls,run:()=>context.selectInvoiceDates('2026-11-09','2026-11-10')};
 }
 test('date selection includes invoices beyond the visible page and preserves earlier choices',async()=>{
@@ -46,11 +49,20 @@ test('excessive date matches and changed filters leave the existing selection in
   const pending=h.run();h.context.state.query='其他';resolve({json:async()=>({items:[{id:1}],total:1})});
   await assert.rejects(pending,/筛选条件已变化/);assert.equal(h.context.state.selected.size,1);
 });
+test('date selection respects tag filters and rejects a response after those filters change',async()=>{
+  const h=dateSelectionHarness();h.context.state.tagIds=[2,5];h.context.state.untagged=true;
+  await h.run();const query=new URL(h.calls[0],'http://localhost').searchParams;
+  assert.deepEqual(query.getAll('tag_id'),['2','5']);assert.equal(query.get('untagged'),'true');
+  const stale=dateSelectionHarness();let release;
+  stale.context.api=()=>new Promise(resolve=>release=resolve);
+  const pending=stale.run();stale.context.state.tagIds=[9];release({json:async()=>({items:[{id:1}],total:1})});
+  await assert.rejects(pending,/筛选条件已变化/);assert.deepEqual([...stale.context.state.selected],[1000]);
+});
 test('amount display preserves global server order instead of regrouping by date',()=>{
   const rows=[1,2,3].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:id*100,imported_at:id===2?'2026-11-10':'2026-11-09'}));
   const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),invoiceSort:'amount_asc',filter:'全部',query:'',invoiceCount:3,invoiceTotal:3},
     esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoicePreview:()=>'',invoiceNoteSummary:()=>'',listPager:()=>''});
-  vm.runInContext(section('function invoicePage(', '\nfunction groupPage('),context);
+  withTagHelpers(context);vm.runInContext(section('function invoicePage(', '\nfunction groupPage('),context);
   const html=context.invoicePage();
   assert.ok(html.indexOf('data-preview="1"')<html.indexOf('data-preview="2"'));
   assert.ok(html.indexOf('data-preview="2"')<html.indexOf('data-preview="3"'));
@@ -58,26 +70,23 @@ test('amount display preserves global server order instead of regrouping by date
   assert.match(html,/class="invoice-sort export-menu"/);assert.doesNotMatch(html,/<select id="invoice-sort"/);
   assert.match(html,/data-invoice-sort="amount_asc" aria-pressed="true"/);
 });
-test('invoice list only focuses and previews an explicitly chosen invoice',()=>{
-  const rows=[1,2].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:100,invoice_date:'2026-11-16',imported_at:'2026-11-16'})),previews=[];
-  const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),preview:null,filter:'全部',query:'',invoiceCount:2,invoiceTotal:2,unpaidCount:2,unpaidAmount:200,reviewCount:0},
-    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoiceNoteSummary:()=>'',listPager:()=>'',invoicePreview:current=>{previews.push(current?.id??null);return ''}});
-  vm.runInContext(section('function isImportDaySelected(', '\nfunction groupPage('),context);
-  assert.doesNotMatch(context.invoicePage(),/\bfocused\b|\bis-selected\b/);assert.equal(previews.pop(),null);
-  context.state.preview=2;
-  const focused=context.invoicePage().match(/<tr class="invoice-row[^"\n]*\bfocused\b[^"\n]*">[\s\S]*?<\/tr>/g)||[];
-  assert.equal(focused.length,1);assert.match(focused[0],/data-preview="2"/);assert.equal(previews.pop(),2);
-  context.state.preview=99;
-  assert.doesNotMatch(context.invoicePage(),/\bfocused\b/);assert.equal(previews.pop(),null);
-  context.state.preview=null;context.state.selected.add(1);context.state.selectedRecords.set(1,rows[0]);
-  const selected=context.invoicePage();
-  assert.match(selected,/\bis-selected\b/);assert.doesNotMatch(selected,/\bfocused\b/);assert.equal(previews.pop(),null);
+test('invoice list uses a separate tags column and only opens previews in a modal',()=>{
+  const rows=[1,2].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:100,invoice_date:'2026-11-16',imported_at:'2026-11-16',tags:[{id:1,name:'差旅'}]}));
+  const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),preview:2,filter:'全部',query:'',invoiceCount:2,invoiceTotal:2,unpaidCount:2,unpaidAmount:200,reviewCount:0},
+    esc:String,cash:n=>'¥'+n/100,date:String,uiIcon:()=>'',header:()=>'',invoiceNoteSummary:()=>'',listPager:()=>''});
+  withTagHelpers(context);vm.runInContext(section('function isImportDaySelected(', '\nfunction groupPage('),context);
+  const html=context.invoicePage();
+  assert.doesNotMatch(html,/\bfocused\b|class="invoice-preview"|invoice-source/);
+  assert.match(html,/<th>标签<\/th>/);assert.match(html,/data-invoice-tag-cell="1"/);assert.match(html,/class="tag-chip" title="差旅"/);
+  assert.ok(html.indexOf('<th>标签</th>')<html.indexOf('>开票日期</th>'));
+  context.state.selected.add(1);context.state.selectedRecords.set(1,rows[0]);
+  assert.match(context.invoicePage(),/\bis-selected\b/);
 });
 test('sort choices reset pagination, preserve filters and selection, and close the menu',async()=>{
   const menu={open:true},calls=[],button={dataset:{invoiceSort:'amount_asc'},closest:()=>menu,matches:()=>false};
   const context=vm.createContext({state:{invoiceSort:'imported_desc',invoicePage:3,query:'餐饮',filter:'未报销',selected:new Set([9])},
     load:async()=>calls.push('load'),content:{querySelector:()=>({focus:()=>calls.push('focus')})},toast:message=>calls.push(message)});
-  vm.runInContext(section('async function handleClick(', "\ndocument.addEventListener('click',handleClick)"),context);
+  withTagHelpers(context);vm.runInContext(section('async function handleClick(', "\ndocument.addEventListener('click',handleClick)"),context);
   await context.handleClick({target:{closest:()=>button}});
   assert.equal(menu.open,false);assert.equal(context.state.invoiceSort,'amount_asc');assert.equal(context.state.invoicePage,0);
   assert.equal(context.state.query,'餐饮');assert.equal(context.state.filter,'未报销');assert.deepEqual([...context.state.selected],[9]);
@@ -91,7 +100,7 @@ function exportHarness(){
     document:{querySelectorAll:()=>controls},form:{dataset:{submit:'old'},querySelector:s=>s==='[data-export-download]'?link:done},
     toast:message=>messages.push(message),esc:String,uiIcon:()=>'',openDialog:(title,html)=>{context.html=html},
     api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({download_id:'a'.repeat(48),filename:'发票_2张_20261110_153012.zip'})}}});
-  vm.runInContext(section('async function exportInvoices(', '\nasync function action('),context);
+  withTagHelpers(context);vm.runInContext(section('async function exportInvoices(', '\nasync function action('),context);
   return {context,controls,link,done,messages,calls};
 }
 test('invoice export uses a native HTTP download and keeps a retry link',async()=>{
@@ -116,7 +125,7 @@ function previewHarness(expanded=true){
   const viewer={dataset:{pdfViewer:'9',pdfCurrent:'1',pdfTotal:'2',previewScale:'100'},
     hasAttribute:()=>expanded,querySelector:selector=>({'img':image,'[data-pdf-step="-1"]':previous,'[data-pdf-step="1"]':next,'[data-pdf-page]':label,'[data-preview-scale-label]':scale,'[data-preview-zoom="-25"]':previous,'[data-preview-zoom="25"]':next,'.document-scroll':scroll}[selector])};
   const context=vm.createContext({Map,Number,uiMotion:()=>{}});
-  vm.runInContext(section('const pdfPages=new Map();','\nfunction manualInvoicePreview('),context);
+  withTagHelpers(context);vm.runInContext(section('const pdfPages=new Map();','\nfunction manualInvoicePreview('),context);
   return {context,viewer,image,previous,next,label,scale,scroll,
     zoom:value=>context.zoomInvoicePreview({dataset:{previewZoom:String(value)},closest:()=>viewer}),
     turn:step=>context.turnPdfPage({dataset:{pdfStep:String(step)},closest:()=>viewer})};
@@ -147,7 +156,7 @@ test('desktop invoice clicks open the modal and preserve the row for focus retur
     form:{dataset:{submit:'old-action'},querySelector:()=>({remove:()=>calls.push('footer removed')})},
     render:()=>calls.push('render'),invoicePreview:(value,expanded)=>{assert.equal(value,invoice);assert.equal(expanded,true);return 'large preview'},
     openDialog:(title,body)=>calls.push([title,body])});
-  vm.runInContext(section('function openInvoicePreview(', '\nfunction zoomInvoicePreview('),context);
+  withTagHelpers(context);vm.runInContext(section('function openInvoicePreview(', '\nfunction zoomInvoicePreview('),context);
   context.openInvoicePreview(invoice);
   assert.equal(context.state.preview,9);assert.equal(context.form.dataset.submit,undefined);
   assert.deepEqual(calls,['render','focus',['发票预览','large preview'],'footer removed']);
@@ -161,7 +170,7 @@ function invoiceNoteHarness(){
     document:{querySelectorAll:()=>[]},uiIcon:()=>'',
     api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({note:JSON.parse(options.body).note.trim()})}}
   });
-  vm.runInContext(section('const esc=', '\nconst cash')+'\n'+section('const invoiceNoteEditors=', '\nfunction invoicePreview('),context);
+  withTagHelpers(context);vm.runInContext(section('const esc=', '\nconst cash')+'\n'+section('const invoiceNoteEditors=', '\nfunction invoicePreview('),context);
   return {context,invoice,input,calls,run:action=>context.handleInvoiceNote({closest:()=>sectionElement,hasAttribute:name=>name==='data-note-'+action})};
 }
 test('invoice notes escape markup and only update local records after a successful save',async()=>{
@@ -202,7 +211,7 @@ function loadHarness(){
     content:{querySelector:()=>null},render:()=>counters.renders++,
     api:async url=>({json:async()=>url==='/api/summary'?summary:url==='/api/accounts'?[]:{items:[],total:0}})
   });
-  vm.runInContext(section('let loadSequence=','\nconst uiIcon'),context);
+  withTagHelpers(context);vm.runInContext(section('let loadSequence=','\nconst uiIcon'),context);
   return {context,counters,load:options=>context.load(options)};
 }
 test('unchanged background refresh keeps existing buttons in the DOM',async()=>{
@@ -224,7 +233,7 @@ function reprocessHarness(){
     state:{page:'emails'},mailReprocessBusy:new Set(),mailReprocessFeedback:new Map(),dialog:{open:false},form:{dataset:{}},
     document:{querySelectorAll:selector=>selector.includes('data-reprocess-status')?[context.currentStatus]:[button]},
     load:async()=>{},toast:message=>toasts.push(message)});
-  vm.runInContext(section('function reprocessFeedback(', '\nasync function showEmail('),context);
+  withTagHelpers(context);vm.runInContext(section('function reprocessFeedback(', '\nasync function showEmail('),context);
   return {context,button,status,toasts,run:()=>context.reprocessMessage(button)};
 }
 test('a reopened email shows errors from the pending request and can retry',async()=>{
@@ -260,7 +269,7 @@ test('new mail filters keep server results and their pagination total',()=>{
     esc:value=>String(value??''),uiIcon:name=>`<svg data-icon="${name}"></svg>`,date:value=>value,
     header:()=>'',empty:message=>message,listPager:(total,page)=>`pager:${total}:${page}`,
     mailReprocessBusy:new Set(),mailReprocessFeedback:new Map()});
-  vm.runInContext(section('function emailStatusFlags(', '\nfunction failedPage('),context);
+  withTagHelpers(context);vm.runInContext(section('function emailStatusFlags(', '\nfunction failedPage('),context);
   const html=context.emailsPage();
   assert.match(html,/data-email="23"/);assert.match(html,/pager:51:1/);
   assert.match(html,/<option value="deleted" selected>发票已删除<\/option>/);
@@ -278,7 +287,7 @@ function mergeHarness(){
     openDialog:(title,body,label)=>{context.body=body;submit.textContent=label},
     api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)})}
   });
-  vm.runInContext(section('function showMergeDialog(', '\nfunction showUploadPreview('),context);
+  withTagHelpers(context);vm.runInContext(section('function showMergeDialog(', '\nfunction showUploadPreview('),context);
   return {context,submit,error,calls,messages};
 }
 test('merge captures both record identities and blocks double submission',async()=>{
@@ -310,4 +319,47 @@ test('mail retry separates redundant links from real processing failures',async(
   await h.run();assert.equal(h.status.textContent,'已存在 1 张 · 跳过 1 个重复下载入口');
   h.context.api=async()=>({json:async()=>({existing:1,files_found:1,errors:1,error_reasons:['链接下载失败']})});
   await h.run();assert.equal(h.status.textContent,'已存在 1 张 · 1 项处理失败（链接下载失败）');
+});
+
+function tagEditorHarness(){
+  const invoice={id:9,tags:[{id:1,name:'差旅'}],note:'保留备注'},calls=[];
+  const context=vm.createContext({Set,Map,Number,JSON,invoice,loadSequence:0,
+    state:{invoices:[invoice],selectedRecords:new Map([[9,{...invoice}]]),tags:[]},
+    form:{querySelector:selector=>selector.startsWith('[data-invoice-tags=')?null:{focus(){}}},
+    esc:String,uiIcon:()=>'',load:async()=>{},toast:()=>{},
+    api:async(url,options)=>{calls.push({url,options});return {json:async()=>url==='/api/tags'?[{id:1,name:'差旅'},{id:2,name:'项目 <设计稿>'}]:{tags:[{id:2,name:'项目 <设计稿>'}]}}}});
+  withTagHelpers(context);vm.runInContext('previewInvoiceRecord=invoice',context);
+  return {context,invoice,calls,run:name=>context.handleInvoiceTags({hasAttribute:attr=>attr==='data-tag-'+name})};
+}
+test('invoice tag saves block duplicate writes and update records only after success',async()=>{
+  const h=tagEditorHarness();await h.run('edit');
+  vm.runInContext('invoiceTagEditor.ids=new Set([2])',h.context);
+  let release,writes=0;
+  h.context.api=async(url,options)=>{writes++;return new Promise(resolve=>release=()=>resolve({json:async()=>({tags:[{id:2,name:'项目 <设计稿>'}]})}))};
+  const pending=h.run('save');await h.run('save');assert.equal(writes,1);assert.equal(h.invoice.tags[0].id,1);
+  release();await pending;
+  assert.equal(h.invoice.tags[0].id,2);assert.equal(h.context.state.selectedRecords.get(9).tags[0].id,2);
+  assert.equal(h.invoice.note,'保留备注');assert.equal(h.context.loadSequence,1);
+  assert.equal(vm.runInContext('invoiceTagEditor',h.context),null);
+});
+test('failed invoice tag saves retain the selected draft and cancel preserves saved associations',async()=>{
+  const h=tagEditorHarness();await h.run('edit');vm.runInContext('invoiceTagEditor.ids.add(2)',h.context);
+  h.context.api=async()=>{throw Error('连接中断')};await h.run('save');
+  assert.equal(vm.runInContext('invoiceTagEditor.saving',h.context),false);
+  assert.equal(vm.runInContext('invoiceTagEditor.error',h.context),'连接中断');
+  assert.equal(vm.runInContext('invoiceTagEditor.ids.has(2)',h.context),true);
+  assert.equal(h.invoice.tags.length,1);await h.run('cancel');assert.equal(h.invoice.tags.length,1);
+});
+test('tag deletion blocks repeat requests and restores the confirmation after failure',async()=>{
+  const submit={disabled:false},close={disabled:false};let release,calls=0,closed=0;
+  const context=vm.createContext({Number,state:{tagIds:[2,5],invoicePage:3},
+    form:{dataset:{tagId:'2'},querySelector:()=>submit,querySelectorAll:()=>[submit,close]},
+    dialog:{close:()=>closed++},load:async()=>{},toast:()=>{},
+    api:()=>{calls++;return new Promise((resolve,reject)=>release={resolve,reject})}});
+  withTagHelpers(context);
+  const pending=context.submitTagDelete();await context.submitTagDelete();assert.equal(calls,1);assert.equal(close.disabled,true);
+  release.reject(Error('连接中断'));await assert.rejects(pending,/连接中断/);
+  assert.equal(submit.disabled,false);assert.equal(close.disabled,false);assert.deepEqual([...context.state.tagIds],[2,5]);assert.equal(closed,0);
+  const retried=context.submitTagDelete();release.resolve({});await retried;
+  assert.deepEqual([...context.state.tagIds],[5]);assert.equal(context.state.invoicePage,0);assert.equal(closed,1);
 });

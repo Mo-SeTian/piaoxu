@@ -40,6 +40,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, reimbursed INTEGER NOT NULL DEFAULT 0, reimbursed_at TEXT);
         CREATE TABLE IF NOT EXISTS group_invoices(group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE, invoice_id INTEGER NOT NULL UNIQUE REFERENCES invoices(id), PRIMARY KEY(group_id, invoice_id));
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS tags(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE);
+        CREATE TABLE IF NOT EXISTS invoice_tags(invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(invoice_id,tag_id));
+        CREATE INDEX IF NOT EXISTS invoice_tags_by_tag ON invoice_tags(tag_id,invoice_id);
         CREATE TABLE IF NOT EXISTS notification_channels(
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider TEXT NOT NULL,
             enabled INTEGER NOT NULL, options TEXT NOT NULL, secret TEXT NOT NULL,
