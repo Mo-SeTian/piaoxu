@@ -155,10 +155,13 @@ def test_existing_invoice_sources_are_migrated_once(tmp_path,monkeypatch):
     db.init_db()
     with db.connect() as conn:
         assert [row['has_local_upload'] for row in conn.execute('SELECT has_local_upload FROM invoices ORDER BY id')]==[1,0]
+        assert [row['note'] for row in conn.execute('SELECT note FROM invoices ORDER BY id')]==['','']
         conn.execute('UPDATE invoices SET has_local_upload=1 WHERE id=2')
+        conn.execute("UPDATE invoices SET note='迁移前已保存的备注' WHERE id=2")
     db.init_db()
     with db.connect() as conn:
         assert conn.execute('SELECT has_local_upload FROM invoices WHERE id=2').fetchone()[0]==1
+        assert conn.execute('SELECT note FROM invoices WHERE id=2').fetchone()[0]=='迁移前已保存的备注'
 
 def test_multiple_mailboxes_uid_isolation_and_repeat_sync(monkeypatch):
     from email.message import EmailMessage

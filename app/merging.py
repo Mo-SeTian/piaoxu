@@ -10,8 +10,9 @@ def merge_records(db, source, target):
     db.execute('UPDATE invoice_originals SET invoice_id=? WHERE invoice_id=?',(target['id'],source['id']))
     db.execute('INSERT OR IGNORE INTO invoice_emails(invoice_id,email_id) SELECT ?,email_id FROM invoice_emails WHERE invoice_id=?',
                (target['id'],source['id']))
-    db.execute('UPDATE invoices SET email_id=COALESCE(email_id,?),has_local_upload=MAX(has_local_upload,?) WHERE id=?',
-               (source['email_id'],source['has_local_upload'],target['id']))
+    notes = dict.fromkeys(note for note in (target['note'],source['note']) if note)
+    db.execute('UPDATE invoices SET email_id=COALESCE(email_id,?),has_local_upload=MAX(has_local_upload,?),note=? WHERE id=?',
+               (source['email_id'],source['has_local_upload'],'\n\n'.join(notes),target['id']))
     db.execute('UPDATE invoices SET duplicate_of=? WHERE duplicate_of=?',(target['id'],source['id']))
     db.execute('DELETE FROM invoices WHERE id=?',(source['id'],))
     if Path(target['stored_name']).suffix.lower() != '.pdf':

@@ -49,6 +49,41 @@ def invoice_xml(number):
     return f'<Invoice><Fphm>{number}</Fphm><Kprq>2026-10-15</Kprq><Gmfmc>示例购买方</Gmfmc><Xsfmc>示例销售方</Xsfmc><Jshj>200.35</Jshj></Invoice>'.encode()
 
 
+def test_invoice_note_is_saved_independently_and_can_be_cleared(isolated_storage):
+    config,data,client,db,service,backup=isolated_storage
+    original=invoice_xml('99000000000000000018')
+    ident=client.post('/api/invoices/upload',files={'files':('invoice.xml',original,'application/xml')}).json()[0]['id']
+    before=client.get('/api/invoices').json()[0]
+    assert before['note']==''
+    note='杭州出差住宿\n项目 <设计稿> & 报销说明'
+    response=client.patch(f'/api/invoices/{ident}/note',json={'note':'  '+note+'\n '})
+    assert response.status_code==200
+    assert response.json()=={'note':note}
+    after=client.get('/api/invoices').json()[0]
+    assert {key:value for key,value in after.items() if key!='note'}=={key:value for key,value in before.items() if key!='note'}
+    assert after['note']==note
+    assert client.get('/api/invoices?limit=50').json()['items'][0]['note']==note
+    assert client.get(f'/api/invoices/{ident}/original').content==original
+    exported=client.post('/api/invoices/export',json={'ids':[ident]})
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        assert [archive.read(name) for name in archive.namelist()]==[original]
+    fields={key:before[key] for key in ('buyer','seller','amount_cents','invoice_date','invoice_number','export_name')}
+    assert client.patch(f'/api/invoices/{ident}',json=fields).status_code==200
+    assert client.get('/api/invoices').json()[0]['note']==note
+    group=client.post('/api/groups',json={'name':'差旅报销','ids':[ident]}).json()['id']
+    assert client.patch(f'/api/groups/{group}',json={'reimbursed':True}).status_code==200
+    assert client.patch(f'/api/invoices/{ident}/note',json={'note':'已报销，资料已归档'}).status_code==200
+    with db.connect() as conn:
+        assert conn.execute('SELECT reimbursed FROM invoices WHERE id=?',(ident,)).fetchone()[0]==1
+    assert client.patch(f'/api/invoices/{ident}/note',json={'note':''}).json()=={'note':''}
+    assert client.get('/api/invoices').json()[0]['note']==''
+    assert client.patch(f'/api/invoices/{ident+1}/note',json={'note':'不存在'}).status_code==404
+    assert client.patch(f'/api/invoices/{ident}/note',json={'note':None}).status_code==422
+    assert client.patch(f'/api/invoices/{ident}/note',json={}).status_code==422
+    from app.main import app
+    assert TestClient(app,headers={'X-Piaoxu-Request':'1'}).patch(f'/api/invoices/{ident}/note',json={'note':'无登录'}).status_code==401
+
+
 def test_native_export_download_supports_ranges_and_requires_the_same_session(isolated_storage):
     from app.main import app
     config,data,client,db,service,backup=isolated_storage
@@ -174,6 +209,7 @@ def test_restore_older_backup_initializes_login(isolated_storage):
     with db.connect() as conn:
         conn.execute('DROP TABLE login_sessions')
         conn.execute('DROP TABLE login_user')
+        conn.execute('ALTER TABLE invoices DROP COLUMN note')
     old_snapshot=io.BytesIO()
     backup.create_backup(old_snapshot)
     auth.ensure_auth()
@@ -181,6 +217,8 @@ def test_restore_older_backup_initializes_login(isolated_storage):
     restored=client.post('/api/backup/restore',files={'file':('old.zip',old_snapshot.getvalue(),'application/zip')})
     assert restored.status_code==200
     assert client.post('/api/auth/login',json={'username':'admin','password':'admin'}).status_code==200
+    with db.connect() as conn:
+        assert 'note' in {row['name'] for row in conn.execute('PRAGMA table_info(invoices)')}
 
 
 def test_delete_invoice_updates_group_duplicate_and_email(isolated_storage):
@@ -516,6 +554,7 @@ def test_backup_and_restore_all_data_and_credentials(isolated_storage):
     config,data,client,db,service,backup=isolated_storage
     original=invoice_xml('78123456789012345678')
     ident=client.post('/api/invoices/upload',files=[('files',('invoice.xml',original,'application/xml'))]).json()[0]['id']
+    assert client.patch(f'/api/invoices/{ident}/note',json={'note':'客户交流会\n随本月差旅报销'}).status_code==200
     assert client.post('/api/accounts',json={'name':'示例邮箱','email':'backup-test@qq.com','auth_code':'fake-authorization'}).status_code==200
     assert client.put('/api/ai-settings',json={'base_url':'https://example.test/v1','model':'sample-model','api_key':'fake-api-key','auto_enabled':False}).status_code==200
     assert client.put('/api/settings',json={'fields':['金额','商户']}).status_code==200
@@ -538,6 +577,7 @@ def test_backup_and_restore_all_data_and_credentials(isolated_storage):
     assert client.post('/api/auth/login',json={'username':'admin','password':'admin'}).status_code==200
     assert len(client.get('/api/invoices').json())==1
     assert client.get(f'/api/invoices/{ident}/original').content==original
+    assert client.get('/api/invoices').json()[0]['note']=='客户交流会\n随本月差旅报销'
     assert client.get('/api/settings').json()['fields']==['金额','商户']
     assert client.get('/api/ai-settings').json()['has_key']
     assert len(client.get('/api/accounts').json())==1
@@ -1201,6 +1241,8 @@ def test_explicit_merge_keeps_originals_mail_and_reimbursement(isolated_storage)
     target=service.import_file('base.xml',content,'本地上传')[0]
     source_content=content.replace(b'</Invoice>',b'<Extra>copy</Extra></Invoice>')
     source=service.import_file('copy.xml',source_content,'邮件')[0]
+    assert client.patch(f'/api/invoices/{target}/note',json={'note':'客户交流会'}).status_code==200
+    assert client.patch(f'/api/invoices/{source}/note',json={'note':'原件已核对'}).status_code==200
     extra=b'%PDF-1.7\nextra\n%%EOF'
     import hashlib
     digest=hashlib.sha256(extra).hexdigest();stored=digest+'.pdf';(data/'files'/stored).write_bytes(extra)
@@ -1220,6 +1262,7 @@ def test_explicit_merge_keeps_originals_mail_and_reimbursement(isolated_storage)
     assert response.status_code==200 and response.json()['id']==target
     items=client.get('/api/invoices').json();assert len(items)==1
     assert items[0]['reimbursed']==1 and len(items[0]['other_originals'])==2
+    assert items[0]['note']=='客户交流会\n\n原件已核对'
     assert len(items[0]['mail_sources'])==2 and items[0]['has_local_upload']
     for email_id in email_ids:
         item=client.get(f'/api/emails/{email_id}').json()

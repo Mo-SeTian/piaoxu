@@ -56,7 +56,7 @@ def init_db():
         ''')
 
         invoice_cols = {r['name'] for r in db.execute('PRAGMA table_info(invoices)')}
-        for column in ('buyer_tax_id','seller_tax_id'):
+        for column in ('buyer_tax_id','seller_tax_id','note'):
             if column not in invoice_cols:
                 db.execute(f"ALTER TABLE invoices ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         delivery_cols = {r['name'] for r in db.execute('PRAGMA table_info(notification_deliveries)')}

@@ -244,6 +244,26 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .original-info{display:grid;gap:2px;min-width:0}.original-filename{display:flex;min-width:0;font-size:12px;line-height:1.6}.original-filename>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.original-filename>span:last-child{flex:none;white-space:nowrap}.original-kind{color:var(--muted);font-size:11px;line-height:1.6}
 .original-download{display:flex;align-items:center;justify-content:center;width:32px;height:32px}.original-download .button-icon{width:18px;height:18px}
 .preview-actions{display:flex;flex-wrap:wrap;gap:8px}.preview-actions .button{font-size:12px;min-height:38px;padding:8px 14px}.preview-link{display:flex;flex:1;min-width:0}
+.invoice-note{margin:20px 0;padding-top:16px;border-top:1px solid var(--line)}
+.invoice-note-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;margin-bottom:9px}
+.invoice-note-heading h3{margin:0;font-size:13px;font-weight:500}
+.invoice-note-heading .text-button{min-height:28px;font-size:12px;padding:2px 0}
+.invoice-note-text{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);font-size:12px;line-height:1.9}
+.invoice-note-add{display:inline-flex;align-items:center;justify-content:flex-start;gap:6px;color:var(--muted);font-size:12px;min-height:36px}
+.invoice-note-add .button-icon{width:14px;height:14px}
+.invoice-note textarea{display:block;resize:vertical;width:100%;min-height:112px;padding:11px 12px;border:1px solid var(--control);border-radius:12px;background:var(--surface);color:var(--ink);font:400 12px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+.invoice-note textarea::placeholder{color:var(--muted)}
+.invoice-note textarea:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.invoice-note-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.invoice-note-actions .button{font-size:12px;min-height:36px;padding:8px 14px}
+.invoice-note-status{font-size:11px;color:var(--muted);line-height:1.7}
+.invoice-note-status:not(:empty){margin-top:9px}
+.invoice-name .invoice-note-summary{max-width:100%;color:var(--muted);font-size:11px;line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:640px){
+  .invoice-note textarea{font-size:16px;min-height:132px}
+  .invoice-note-actions .button,.invoice-note-heading .text-button,.invoice-note-add{min-height:44px}
+}
+
 .dialog-preview .preview-head{margin-top:0}
 .preview-open{width:100%;padding:0;cursor:zoom-in}.preview-open:hover{border-color:var(--muted)}
 dialog:has(.preview-workspace){width:min(1440px,calc(100% - 48px));max-width:none;height:min(860px,calc(100dvh - 48px));max-height:calc(100dvh - 48px);overflow:hidden}

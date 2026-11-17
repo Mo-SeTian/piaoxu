@@ -127,6 +127,9 @@ class InvoiceUpdate(BaseModel):
     invoice_number: str = ''
     export_name: str = ''
 
+class InvoiceNoteUpdate(BaseModel):
+    note: str
+
 class Ids(BaseModel):
     ids: list[int] = Field(min_length=1,max_length=500)
 
@@ -416,6 +419,15 @@ def duplicate_for_update(db, row, number):
     if not duplicate: return None,''
     state = row['duplicate_state'] if same_number and row['duplicate_state'] in ('pending','confirmed') else 'pending'
     return duplicate,state
+
+@app.patch('/api/invoices/{invoice_id}/note')
+def update_invoice_note(invoice_id: int, value: InvoiceNoteUpdate):
+    note = value.note.strip()
+    with connect() as db:
+        updated = db.execute('UPDATE invoices SET note=? WHERE id=?', (note,invoice_id))
+        if not updated.rowcount: raise HTTPException(404,'发票不存在')
+    return {'note':note}
+
 
 @app.patch('/api/invoices/{invoice_id}')
 def update_invoice(invoice_id: int, value: InvoiceUpdate):

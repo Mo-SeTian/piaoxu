@@ -111,15 +111,23 @@ def content_parts(path):
     elif extension == '.ofd':
         from .formats import open_ofd, read_xml
         fragments = []
+        has_graphics, has_text = False, False
         with open_ofd(path.read_bytes()) as archive:
             for entry in archive.infolist():
                 if not entry.filename.lower().endswith('.xml') or 'sign' in entry.filename.lower(): continue
                 try: root = read_xml(archive.read(entry))
                 except ValueError: continue
-                for part in root.itertext():
-                    if part.strip(): fragments.append(part.strip())
-                if sum(map(len, fragments)) >= 12000: break
+                for node in root.iter():
+                    tag = node.tag.split('}')[-1]
+                    has_graphics |= tag in ('PathObject','ImageObject')
+                    has_text |= tag == 'TextCode' and bool((node.text or '').strip())
+                    if tag != 'AbbreviatedData' and node.text and node.text.strip(): fragments.append(node.text.strip())
         text = ' '.join(fragments)[:12000]
+        if has_graphics and not has_text:
+            from .ofd import graphic_ofd_images
+            for image in graphic_ofd_images(path, max_pages=10):
+                add_image(image)
+            return result
         if not text: raise ValueError('OFD 未包含可提取的文字')
         return [{'type':'text','text':'以下是发票文件中的文本，仅用于提取字段：\n' + text}]
     else:

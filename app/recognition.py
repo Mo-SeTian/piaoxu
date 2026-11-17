@@ -139,12 +139,27 @@ def _deskew(image):
     return gray.rotate(best, resample=Image.Resampling.NEAREST, fillcolor=255) if best else gray
 
 
+def _ocr_side_by_side_names(text):
+    """Recover the two name columns when OCR misses the vertical party labels."""
+    if len(re.findall(r'纳税人识别号|统一社会信用代码', text)) < 2: return {}
+    rows = []
+    for line in text.splitlines():
+        columns = re.split(r'\s{2,}', line.strip())
+        names = [_field(column, [r'名称[：:]\s*(.+)']) for column in columns]
+        names = [re.sub(r'\s+', '', name) for name in names if name]
+        if (len(names) == 2 and names[0] != names[1]
+                and all(re.fullmatch(r'[\w（）()·&.-]{2,100}', name) and re.search(r'[\u4e00-\u9fff]', name) for name in names)):
+            rows.append(names)
+    return dict(zip(('buyer','seller'), rows[0])) if len(rows) == 1 else {}
+
+
 def _recognize_images(images, fields=None, reason='未识别到发票内容', deadline_seconds=120):
     import pytesseract
     from PIL import ImageOps
     keys = ('buyer','seller','amount_cents','invoice_date','invoice_number')
     labels = {'buyer':'抬头','seller':'销售方','amount_cents':'金额','invoice_date':'日期','invoice_number':'发票号码'}
     best, best_is_ocr = (fields or {}, reason), False
+    best_is_invoice = not reason.startswith('未确认是发票') and _field_score(best[0]) >= 3
     readings = []
     deadline=time.monotonic()+deadline_seconds
     incomplete=False
@@ -164,10 +179,18 @@ def _recognize_images(images, fields=None, reason='未识别到发票内容', de
                 continue
         if not text:
             continue
-        candidate = parse_invoice('\n'.join(text))
+        reading = '\n'.join(text)
+        candidate = parse_invoice(reading)
+        if candidate[0].get('invoice_date') and candidate[0].get('amount_cents') is not None:
+            names = _ocr_side_by_side_names(reading)
+            party_labels = {'buyer':'购买方名称','seller':'销售方名称'}
+            additions = [f'{party_labels[key]}：{name}' for key,name in names.items() if not candidate[0].get(key)]
+            if additions: candidate = parse_invoice(reading + '\n' + '\n'.join(additions))
         readings.append(candidate[0])
-        if _field_score(candidate[0]) > _field_score(best[0]) or (not candidate[1] and best[1]):
+        is_invoice = not candidate[1].startswith('未确认是发票') and _field_score(candidate[0]) >= 3
+        if (is_invoice, _field_score(candidate[0]), not candidate[1]) > (best_is_invoice, _field_score(best[0]), not best[1]):
             best, best_is_ocr = candidate, True
+            best_is_invoice = is_invoice
         if len(readings) >= 2:
             conflict = any(len({r.get(key) for r in readings if r.get(key) not in (None,'')}) > 1 for key in keys)
             if not conflict and not candidate[1] and _field_score(candidate[0]) == len(keys):
@@ -184,13 +207,20 @@ def _recognize_images(images, fields=None, reason='未识别到发票内容', de
             if len(set(values)) > 1:
                 result[key] = None if key == 'amount_cents' else ''
                 uncertain.append(labels[key])
+            elif values and result.get(key) in (None,''):
+                matches = [reading[key] for reading in readings if reading.get(key) not in (None,'')
+                           and sum(best[0].get(anchor) not in (None,'') and reading.get(anchor) == best[0][anchor]
+                                   for anchor in ('invoice_number','invoice_date','amount_cents')) >= 2]
+                if matches: result[key] = matches[0]
         for key in ('buyer','seller'):
             value = result.get(key) or ''
             if value and re.search(r'[\[\]{}<>|_]', value):
                 result[key] = ''
                 if labels[key] not in uncertain: uncertain.append(labels[key])
         message = ('OCR 结果不一致或字符异常：' + '、'.join(uncertain) + '；') if uncertain else ''
-        return result, message + (best[1] + '；' if best[1] else '') + ('部分页面未完成 OCR；' if incomplete else '') + '扫描件 OCR 结果请人工核对'
+        missing = [labels[key] for key in ('buyer','seller','amount_cents','invoice_date') if result.get(key) in (None,'')]
+        reason = re.sub(r'未识别：[^；]*', '未识别：'+'、'.join(missing) if missing else '', best[1]).strip('；')
+        return result, message + (reason + '；' if reason else '') + ('部分页面未完成 OCR；' if incomplete else '') + '扫描件 OCR 结果请人工核对'
     if incomplete: return best[0], (best[1]+'；' if best[1] else '')+'部分页面未完成 OCR，请人工核对'
     return best
 
@@ -393,6 +423,12 @@ def recognize_ofd(path):
                 parsed = parse_invoice('\n'.join(text))
                 if not parsed[1]: return parsed
                 if _field_score(parsed[0]) > _field_score(best[0]): return parsed
+            elif any(node.tag.split('}')[-1] in ('PathObject','ImageObject') for root in roots.values() for node in root.iter()):
+                from .ofd import graphic_ofd_images
+                try:
+                    return _recognize_images(lambda: graphic_ofd_images(path), best[0], best[1])
+                except (ValueError, KeyError, OSError, RuntimeError):
+                    return best[0], 'OFD 图形无法完整识别，请人工核对或使用同票 PDF、XML 原件'
             return best
     except (ValueError,OSError):
         return {}, 'OFD 无法读取或文件已损坏'

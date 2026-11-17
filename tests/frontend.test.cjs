@@ -49,7 +49,7 @@ test('excessive date matches and changed filters leave the existing selection in
 test('amount display preserves global server order instead of regrouping by date',()=>{
   const rows=[1,2,3].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:id*100,imported_at:id===2?'2026-11-10':'2026-11-09'}));
   const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),invoiceSort:'amount_asc',filter:'全部',query:'',invoiceCount:3,invoiceTotal:3},
-    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoicePreview:()=>'',listPager:()=>''});
+    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoicePreview:()=>'',invoiceNoteSummary:()=>'',listPager:()=>''});
   vm.runInContext(section('function invoicePage(', '\nfunction groupPage('),context);
   const html=context.invoicePage();
   assert.ok(html.indexOf('data-preview="1"')<html.indexOf('data-preview="2"'));
@@ -61,7 +61,7 @@ test('amount display preserves global server order instead of regrouping by date
 test('invoice list only focuses and previews an explicitly chosen invoice',()=>{
   const rows=[1,2].map(id=>({id,stored_name:id+'.pdf',original_name:id+'.pdf',seller:'商户'+id,amount_cents:100,invoice_date:'2026-11-16',imported_at:'2026-11-16'})),previews=[];
   const context=vm.createContext({Map,state:{invoices:rows,selectedRecords:new Map(),selected:new Set(),preview:null,filter:'全部',query:'',invoiceCount:2,invoiceTotal:2,unpaidCount:2,unpaidAmount:200,reviewCount:0},
-    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',listPager:()=>'',invoicePreview:current=>{previews.push(current?.id??null);return ''}});
+    esc:String,cash:n=>'¥'+n/100,date:String,sourceSummary:()=>'',uiIcon:()=>'',header:()=>'',invoiceNoteSummary:()=>'',listPager:()=>'',invoicePreview:current=>{previews.push(current?.id??null);return ''}});
   vm.runInContext(section('function isImportDaySelected(', '\nfunction groupPage('),context);
   assert.doesNotMatch(context.invoicePage(),/\bfocused\b|\bis-selected\b/);assert.equal(previews.pop(),null);
   context.state.preview=2;
@@ -74,7 +74,7 @@ test('invoice list only focuses and previews an explicitly chosen invoice',()=>{
   assert.match(selected,/\bis-selected\b/);assert.doesNotMatch(selected,/\bfocused\b/);assert.equal(previews.pop(),null);
 });
 test('sort choices reset pagination, preserve filters and selection, and close the menu',async()=>{
-  const menu={open:true},calls=[],button={dataset:{invoiceSort:'amount_asc'},closest:()=>menu};
+  const menu={open:true},calls=[],button={dataset:{invoiceSort:'amount_asc'},closest:()=>menu,matches:()=>false};
   const context=vm.createContext({state:{invoiceSort:'imported_desc',invoicePage:3,query:'餐饮',filter:'未报销',selected:new Set([9])},
     load:async()=>calls.push('load'),content:{querySelector:()=>({focus:()=>calls.push('focus')})},toast:message=>calls.push(message)});
   vm.runInContext(section('async function handleClick(', "\ndocument.addEventListener('click',handleClick)"),context);
@@ -151,6 +151,47 @@ test('desktop invoice clicks open the modal and preserve the row for focus retur
   context.openInvoicePreview(invoice);
   assert.equal(context.state.preview,9);assert.equal(context.form.dataset.submit,undefined);
   assert.deepEqual(calls,['render','focus',['发票预览','large preview'],'footer removed']);
+});
+function invoiceNoteHarness(){
+  const invoice={id:9,note:'已保存的备注',seller:'示例商户'},calls=[],input={value:''};
+  const sectionElement={dataset:{invoiceNote:'9'},closest:()=>null,querySelector:()=>input};
+  const context=vm.createContext({Map,Number,
+    state:{invoices:[invoice],selectedRecords:new Map([[9,{...invoice}]])},loadSequence:1,
+    content:{querySelector:selector=>selector.startsWith('.invoice-title-btn')?null:{focus(){}}},
+    document:{querySelectorAll:()=>[]},uiIcon:()=>'',
+    api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)});return {json:async()=>({note:JSON.parse(options.body).note.trim()})}}
+  });
+  vm.runInContext(section('const esc=', '\nconst cash')+'\n'+section('const invoiceNoteEditors=', '\nfunction invoicePreview('),context);
+  return {context,invoice,input,calls,run:action=>context.handleInvoiceNote({closest:()=>sectionElement,hasAttribute:name=>name==='data-note-'+action})};
+}
+test('invoice notes escape markup and only update local records after a successful save',async()=>{
+  const h=invoiceNoteHarness();h.invoice.note='<img src=x onerror=alert(1)>\n备注';
+  assert.doesNotMatch(h.context.invoiceNoteSection(h.invoice),/<img /);
+  assert.match(h.context.invoiceNoteSummary(h.invoice),/&lt;img/);
+  await h.run('edit');h.input.value='  新备注\n保留换行  ';
+  let release;h.context.api=async(url,options)=>{h.calls.push({url,payload:JSON.parse(options.body)});await new Promise(resolve=>release=resolve);return {json:async()=>({note:'新备注\n保留换行'})}};
+  const pending=h.run('save');await h.run('save');
+  assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/invoices/9/note');
+  assert.deepEqual(h.calls[0].payload,{note:'  新备注\n保留换行  '});
+  assert.match(h.context.invoiceNoteSection(h.invoice),/disabled/);
+  assert.equal(h.invoice.note,'<img src=x onerror=alert(1)>\n备注');
+  release();await pending;
+  assert.equal(h.invoice.note,'新备注\n保留换行');assert.equal(h.invoice.seller,'示例商户');
+  assert.equal(h.context.state.selectedRecords.get(9).note,h.invoice.note);
+  assert.equal(h.context.loadSequence,2);
+  assert.doesNotMatch(h.context.invoiceNoteSection(h.invoice),/<textarea/);
+});
+test('failed note saves retain the draft for retry and cancel leaves the saved note intact',async()=>{
+  const h=invoiceNoteHarness();await h.run('edit');h.input.value='断网时的草稿';
+  h.context.api=async()=>{throw Error('连接中断，请重试')};await h.run('save');
+  assert.equal(h.invoice.note,'已保存的备注');
+  const failed=h.context.invoiceNoteSection(h.invoice);
+  assert.match(failed,/断网时的草稿/);assert.match(failed,/role="alert"/);assert.match(failed,/连接中断/);assert.doesNotMatch(failed,/ disabled/);
+  await h.run('cancel');assert.equal(h.invoice.note,'已保存的备注');
+  assert.doesNotMatch(h.context.invoiceNoteSection(h.invoice),/<textarea/);
+  await h.run('edit');h.input.value='';
+  h.context.api=async()=>({json:async()=>({note:''})});await h.run('save');
+  assert.equal(h.invoice.note,'');assert.match(h.context.invoiceNoteSection(h.invoice),/添加备注/);
 });
 function loadHarness(){
   const counters={renders:0},summary={invoices:0,unreimbursed:0,unreimbursed_amount_cents:0,failed_invoices:0,pending_emails:0};
@@ -232,7 +273,7 @@ function mergeHarness(){
   const context=vm.createContext({Number,console,pendingMerge:null,
     state:{invoices:[invoice,{...invoice,id:2,sha256:'b'.repeat(64),duplicate_of:1,original_name:'copy.xml'}],selected:new Set([2]),selectedRecords:new Map([[2,{}]])},
     form:{dataset:{},querySelector:selector=>selector==='.inline-error'?error:submit,querySelectorAll:()=>buttons},
-    dialog:{close:()=>{context.pendingMerge=null}},pdfPages:new Map([[2,1]]),
+    dialog:{close:()=>{context.pendingMerge=null}},pdfPages:new Map([[2,1]]),invoiceNoteEditors:new Map(),
     esc:String,cash:value=>'¥'+value/100,toast:message=>messages.push(message),load:async()=>{},
     openDialog:(title,body,label)=>{context.body=body;submit.textContent=label},
     api:async(url,options)=>{calls.push({url,payload:JSON.parse(options.body)})}
