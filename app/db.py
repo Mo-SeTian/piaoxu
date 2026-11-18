@@ -43,6 +43,26 @@ def init_db():
         CREATE TABLE IF NOT EXISTS tags(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL COLLATE NOCASE UNIQUE);
         CREATE TABLE IF NOT EXISTS invoice_tags(invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(invoice_id,tag_id));
         CREATE INDEX IF NOT EXISTS invoice_tags_by_tag ON invoice_tags(tag_id,invoice_id);
+        CREATE TABLE IF NOT EXISTS invoice_tag_rules(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            buyer TEXT NOT NULL COLLATE NOCASE,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            UNIQUE(buyer, tag_id)
+        );
+        CREATE TRIGGER IF NOT EXISTS invoice_tag_rules_on_insert
+        AFTER INSERT ON invoices WHEN NEW.recognition_status='已识别'
+        BEGIN
+            INSERT OR IGNORE INTO invoice_tags(invoice_id, tag_id)
+            SELECT NEW.id, tag_id FROM invoice_tag_rules WHERE buyer=trim(NEW.buyer);
+        END;
+        CREATE TRIGGER IF NOT EXISTS invoice_tag_rules_on_update
+        AFTER UPDATE OF buyer, recognition_status ON invoices
+        WHEN NEW.recognition_status='已识别'
+            AND (OLD.recognition_status<>NEW.recognition_status OR trim(OLD.buyer)<>trim(NEW.buyer) COLLATE NOCASE)
+        BEGIN
+            INSERT OR IGNORE INTO invoice_tags(invoice_id, tag_id)
+            SELECT NEW.id, tag_id FROM invoice_tag_rules WHERE buyer=trim(NEW.buyer);
+        END;
         CREATE TABLE IF NOT EXISTS notification_channels(
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, provider TEXT NOT NULL,
             enabled INTEGER NOT NULL, options TEXT NOT NULL, secret TEXT NOT NULL,

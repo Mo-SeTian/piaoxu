@@ -356,7 +356,11 @@ test('invoice tag saves block duplicate writes and update records only after suc
   const h=tagEditorHarness();await h.run('edit');
   vm.runInContext('invoiceTagEditor.ids=new Set([2])',h.context);
   let release,writes=0;
-  h.context.api=async(url,options)=>{writes++;return new Promise(resolve=>release=()=>resolve({json:async()=>({tags:[{id:2,name:'项目 <设计稿>'}]})}))};
+  h.context.api=async(url,options)=>{
+    writes++;
+    assert.deepEqual(JSON.parse(options.body),{tag_ids:[2],base_tag_ids:[1]});
+    return new Promise(resolve=>release=()=>resolve({json:async()=>({tags:[{id:2,name:'项目 <设计稿>'}]})}));
+  };
   const pending=h.run('save');await h.run('save');assert.equal(writes,1);assert.equal(h.invoice.tags[0].id,1);
   release();await pending;
   assert.equal(h.invoice.tags[0].id,2);assert.equal(h.context.state.selectedRecords.get(9).tags[0].id,2);

@@ -1,5 +1,6 @@
 """Invoice labels, shared management and associations."""
 import sqlite3
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -15,6 +16,14 @@ class TagName(BaseModel):
 
 class InvoiceTags(BaseModel):
     tag_ids: list[int] = Field(max_length=500)
+    # A draft's original selection lets us preserve changes made since it opened.
+    base_tag_ids: Optional[list[int]] = Field(default=None, max_length=500)
+
+
+class TagRule(BaseModel):
+    buyer: str = Field(min_length=1, max_length=200)
+    tag_id: int = Field(gt=0)
+    apply_existing: bool = False
 
 
 def tag_name(value):
@@ -39,6 +48,40 @@ def list_tags():
     with connect() as db:
         return [dict(row) for row in db.execute('''SELECT t.id,t.name,COUNT(it.invoice_id) invoice_count
             FROM tags t LEFT JOIN invoice_tags it ON it.tag_id=t.id GROUP BY t.id ORDER BY t.id''')]
+
+
+@router.get('/api/tag-rules')
+def list_tag_rules():
+    with connect() as db:
+        return [dict(row) for row in db.execute('SELECT id,buyer,tag_id FROM invoice_tag_rules ORDER BY id')]
+
+
+@router.post('/api/tag-rules', status_code=201)
+def create_tag_rule(value: TagRule):
+    buyer = value.buyer.strip()
+    if not buyer or any(ord(char) < 32 for char in buyer):
+        raise HTTPException(422, '请输入完整抬头，抬头不能包含换行等控制字符')
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if not db.execute('SELECT 1 FROM tags WHERE id=?', (value.tag_id,)).fetchone():
+            raise HTTPException(404, '标签不存在')
+        try:
+            rule_id = db.execute('INSERT INTO invoice_tag_rules(buyer,tag_id) VALUES(?,?)', (buyer,value.tag_id)).lastrowid
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, '该抬头和标签的规则已存在') from None
+        applied = 0
+        if value.apply_existing:
+            applied = db.execute('''INSERT OR IGNORE INTO invoice_tags(invoice_id,tag_id)
+                SELECT id,? FROM invoices WHERE recognition_status='已识别' AND trim(buyer)=? COLLATE NOCASE''',
+                (value.tag_id,buyer)).rowcount
+    return {'id':rule_id,'buyer':buyer,'tag_id':value.tag_id,'applied':applied}
+
+
+@router.delete('/api/tag-rules/{rule_id}', status_code=204)
+def delete_tag_rule(rule_id: int):
+    with connect() as db:
+        if not db.execute('DELETE FROM invoice_tag_rules WHERE id=?', (rule_id,)).rowcount:
+            raise HTTPException(404, '自动标签规则不存在')
 
 
 @router.post('/api/tags', status_code=201)
@@ -69,15 +112,22 @@ def delete_tag(tag_id: int):
 
 @router.put('/api/invoices/{invoice_id}/tags')
 def update_invoice_tags(invoice_id: int, value: InvoiceTags):
-    ids = list(dict.fromkeys(value.tag_ids))
+    ids = set(value.tag_ids)
+    base = None if value.base_tag_ids is None else set(value.base_tag_ids)
+    additions = ids if base is None else ids - base
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         if not db.execute('SELECT 1 FROM invoices WHERE id=?', (invoice_id,)).fetchone():
             raise HTTPException(404, '发票不存在')
-        if ids and db.execute('SELECT COUNT(*) FROM tags WHERE id IN (' + ','.join('?' * len(ids)) + ')', ids).fetchone()[0] != len(ids):
+        if additions and db.execute('SELECT COUNT(*) FROM tags WHERE id IN (' + ','.join('?' * len(additions)) + ')', tuple(additions)).fetchone()[0] != len(additions):
             raise HTTPException(422, '部分标签已不存在，请刷新后重试')
-        db.execute('DELETE FROM invoice_tags WHERE invoice_id=?', (invoice_id,))
-        db.executemany('INSERT INTO invoice_tags(invoice_id,tag_id) VALUES(?,?)', [(invoice_id,ident) for ident in ids])
+        if base is None:
+            db.execute('DELETE FROM invoice_tags WHERE invoice_id=?', (invoice_id,))
+        else:
+            db.executemany('DELETE FROM invoice_tags WHERE invoice_id=? AND tag_id=?',
+                           [(invoice_id,ident) for ident in base - ids])
+        db.executemany('INSERT OR IGNORE INTO invoice_tags(invoice_id,tag_id) VALUES(?,?)',
+                       [(invoice_id,ident) for ident in additions])
         rows = [{'id':invoice_id}]
         add_invoice_tags(db, rows)
         return {'tags':rows[0]['tags']}
