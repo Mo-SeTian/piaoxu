@@ -7,6 +7,27 @@ function section(start,end){return source.slice(source.indexOf(start),source.ind
 const tagSource=fs.readFileSync(require('node:path').join(__dirname,'../static/tags.js'),'utf8');
 const tagContexts=new WeakSet();
 function withTagHelpers(context){if(!tagContexts.has(context)){vm.runInContext(tagSource.slice(0,tagSource.indexOf("\ndocument.addEventListener('click'")),context);tagContexts.add(context)}}
+test('invoice search waits for IME composition and runs only the latest full query',async()=>{
+  const calls=[];
+  let pending;
+  const context=vm.createContext({loadSequence:0,state:{query:'',invoicePage:1},
+    setTimeout:callback=>{pending=callback;return 1},clearTimeout:()=>{pending=undefined},
+    load:async()=>calls.push(context.state.query)});
+  vm.runInContext(section('let searchTimer;',"\ncontent.addEventListener('input'"),context);
+  const input={id:'search',value:'海德',closest:()=>null};
+  context.updateInvoiceSearch({target:input});
+  assert.equal(typeof pending,'function');
+  input.value='海德 128.50 shi';
+  context.updateInvoiceSearch({target:input,isComposing:true});
+  assert.equal(pending,undefined);
+  assert.equal(context.loadSequence,2);
+  assert.equal(context.state.query,'海德');
+  input.value='海德 128.50 示例科技';
+  context.updateInvoiceSearch({target:input});
+  await pending();
+  assert.deepEqual(calls,['海德 128.50 示例科技']);
+  assert.equal(context.state.invoicePage,0);
+});
 function dateSelectionHarness(total=55){
   const calls=[],items=Array.from({length:Math.min(total,500)},(_,i)=>({id:i+1,amount_cents:100}));
   const context=vm.createContext({Set,URLSearchParams,selectingDates:false,

@@ -38,6 +38,7 @@ from .deletion import delete_invoices, recover_deletions
 from .merging import merge_records
 from . import notifications, export_downloads
 from .tags import router as tag_router, add_invoice_tags
+from .search import invoice_matcher
 
 with storage_lock_sync(exclusive=True):
     recover_interrupted_restore()
@@ -267,7 +268,7 @@ async def restore_backup_file(file: UploadFile = File(...)):
         await file.close()
 
 @app.get('/api/invoices')
-def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,ge=0), query: str='', reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all', sort: Literal['imported_desc','amount_asc','amount_desc']='imported_desc', imported_from: Optional[date]=None, imported_to: Optional[date]=None, tag_id: Optional[list[int]]=Query(None), untagged: bool=False):
+def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,ge=0), query: str=Query('',max_length=500), reimbursement: Literal['all','unreimbursed','reimbursed']='all', view: Literal['all','review']='all', sort: Literal['imported_desc','amount_asc','amount_desc']='imported_desc', imported_from: Optional[date]=None, imported_to: Optional[date]=None, tag_id: Optional[list[int]]=Query(None), untagged: bool=False):
     if imported_from and imported_to and imported_from > imported_to:
         raise HTTPException(422,'开始日期不能晚于结束日期')
     if tag_id and (len(tag_id)>500 or any(ident<=0 for ident in tag_id)):
@@ -287,9 +288,8 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,g
         if imported_from: conditions.append('substr(i.imported_at,1,10)>=?');args.append(imported_from.isoformat())
         if imported_to: conditions.append('substr(i.imported_at,1,10)<=?');args.append(imported_to.isoformat())
         if query:
-            escaped=query.lower().replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
-            conditions.append("LOWER(COALESCE(i.buyer,'')||' '||COALESCE(i.seller,'')||' '||COALESCE(i.original_name,'')||' '||COALESCE(i.invoice_number,'')) LIKE ? ESCAPE '\\'")
-            args.append('%'+escaped+'%')
+            db.create_function('invoice_search_match',5,invoice_matcher(query))
+            conditions.append('invoice_search_match(i.buyer,i.seller,i.original_name,i.invoice_number,i.amount_cents)')
         where=(' WHERE '+' AND '.join(conditions)) if conditions else ''
         total=db.execute('SELECT count(*) '+base+where,args).fetchone()[0] if limit is not None else None
         order={'imported_desc':'i.imported_at DESC,i.id DESC','amount_asc':'i.amount_cents IS NULL,i.amount_cents ASC,i.imported_at DESC,i.id DESC','amount_desc':'i.amount_cents IS NULL,i.amount_cents DESC,i.imported_at DESC,i.id DESC'}[sort]
