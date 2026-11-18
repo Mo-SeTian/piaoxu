@@ -137,6 +137,9 @@ class InvoiceReviewUpdate(BaseModel):
     excluded: bool
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
+class EmailReviewUpdate(BaseModel):
+    excluded: bool
+
 class Ids(BaseModel):
     ids: list[int] = Field(min_length=1,max_length=500)
 
@@ -834,7 +837,7 @@ def summary():
 
 def invoice_summary(db):
     failed=db.execute("SELECT count(*) FROM invoices WHERE recognition_status='识别失败' AND duplicate_state<>'confirmed'").fetchone()[0]
-    pending=db.execute("SELECT count(*) FROM emails WHERE status IN ('导入失败','发票链接待处理')").fetchone()[0]
+    pending=db.execute("SELECT count(*) FROM emails WHERE review_excluded=0 AND status IN ('导入失败','发票链接待处理')").fetchone()[0]
     counts=db.execute('''SELECT count(*) total, COALESCE(sum(amount_cents),0) total_amount,
         count(*) FILTER (WHERE reimbursed=0) unpaid,
         COALESCE(sum(amount_cents) FILTER (WHERE reimbursed=0),0) unpaid_amount
@@ -865,9 +868,9 @@ def dashboard():
             'recent':recent,'group_count':groups}
 
 @app.get('/api/emails')
-def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','has','suspected','none','recognized','failed','deleted','duplicate','pending','processing_failed','link_pending']='all', attention: bool=False):
+def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','has','suspected','none','recognized','failed','deleted','duplicate','pending','processing_failed','link_pending']='all', attention: bool=False, review_excluded: bool=False):
     with connect() as db:
-        query='''SELECT e.id,e.account_id,e.sender,e.subject,e.received_at,e.status,e.folder,a.name account_name,
+        query='''SELECT e.id,e.account_id,e.sender,e.subject,e.received_at,e.status,e.folder,e.review_excluded,a.name account_name,
                         COALESCE(c.invoice_count,0) invoice_count,COALESCE(c.recognized_count,0) recognized_count,
                         COALESCE(c.failed_count,0) failed_count,COALESCE(c.duplicate_count,0) duplicate_count,
                         COALESCE(c.excluded_count,0) excluded_count
@@ -880,7 +883,8 @@ def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,
                             FROM invoice_emails ie JOIN invoices i ON i.id=ie.invoice_id GROUP BY ie.email_id) c ON c.email_id=e.id'''
         where=[];args=[]
         if account_id: where.append('e.account_id=?');args.append(account_id)
-        if attention: where.append("e.status IN ('导入失败','发票链接待处理')")
+        if attention: where.append("e.review_excluded=0 AND e.status IN ('导入失败','发票链接待处理')")
+        if review_excluded: where.append('e.review_excluded=1')
         filters={'invoice':'COALESCE(c.invoice_count,0)>0',
                  'has':'COALESCE(c.recognized_count,0)>0 OR COALESCE(c.duplicate_count,0)>0',
                  'suspected':'COALESCE(c.invoice_count,0)>0 AND COALESCE(c.recognized_count,0)=0 AND COALESCE(c.duplicate_count,0)=0',
@@ -941,6 +945,19 @@ def refresh_html(email_id: int):
     except Exception:
         raise HTTPException(502,'暂时无法从邮箱读取原始排版') from None
     return email_detail(email_id)
+
+@app.patch('/api/emails/{email_id}/review')
+def update_email_review(email_id: int, value: EmailReviewUpdate):
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT status,review_excluded FROM emails WHERE id=?',(email_id,)).fetchone()
+        if not row:
+            raise HTTPException(404,'邮件不存在')
+        if value.excluded and not row['review_excluded'] and row['status'] not in ('导入失败','发票链接待处理'):
+            raise HTTPException(409,'邮件已不在待核对列表，请刷新后重试')
+        db.execute('UPDATE emails SET review_excluded=? WHERE id=?',(int(value.excluded),email_id))
+    return {'excluded':value.excluded}
+
 
 @app.post('/api/emails/{email_id}/reprocess')
 def reprocess_mail(email_id: int):

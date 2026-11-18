@@ -53,3 +53,38 @@ def test_cannot_exclude_recognized_invoice(isolated_storage):
         sha=db.execute('SELECT sha256 FROM invoices WHERE id=?',(ident,)).fetchone()[0]
     assert client.patch(f'/api/invoices/{ident}/review',json={'excluded':True,'sha256':sha}).status_code==409
     assert client.get('/api/invoices',params={'limit':50}).json()['total']==1
+
+
+def test_excluded_failed_mail_is_retained_and_skips_sync_until_restored(isolated_storage,monkeypatch):
+    from app import mail
+
+    _,_,client,db,_,_ = isolated_storage
+    account=client.post('/api/accounts',json={'name':'测试','email':'failed-mail@qq.com','auth_code':'fake'}).json()['id']
+    with db.connect() as conn:
+        ids=[]
+        for uid,status in [('1','导入失败'),('2','发票链接待处理'),('3','普通邮件')]:
+            ids.append(conn.execute('''INSERT INTO emails(account_id,uidvalidity,uid,sender,subject,status,body)
+                VALUES (?,?,?,?,?,?,?)''',(account,'INBOX\x00123',uid,'测试发件人','测试邮件',status,'邮件正文')).lastrowid)
+        conn.execute('INSERT INTO email_sync_failures(account_id,uidvalidity,uid) VALUES (?,?,?)',(account,'INBOX\x00123','1'))
+
+    assert client.get('/api/dashboard').json()['summary']['pending_emails']==2
+    assert client.patch(f'/api/emails/{ids[2]}/review',json={'excluded':True}).status_code==409
+    for ident in ids[:2]:
+        assert client.patch(f'/api/emails/{ident}/review',json={'excluded':True}).json()=={'excluded':True}
+    assert client.get('/api/emails?attention=true&limit=50').json()['total']==0
+    assert client.get('/api/dashboard').json()['summary']['pending_emails']==0
+    excluded=client.get('/api/emails?review_excluded=true&limit=1&offset=1').json()
+    assert excluded['total']==2 and excluded['items'][0]['id']==ids[0]
+    item=client.get(f'/api/emails/{ids[0]}').json()
+    assert (item['body'],item['status'],item['review_excluded'])==('邮件正文','导入失败',1)
+    assert client.post(f'/api/emails/{ids[0]}/reprocess').status_code==409
+
+    mailbox=synthetic_imap({},[],[b'123'])()
+    processed=[]
+    monkeypatch.setattr(mail,'process_message',lambda *args:processed.append(args[2]))
+    assert mail.sync_folder(mailbox,account,b'INBOX','INBOX')==0
+    assert processed==[]
+    assert client.patch(f'/api/emails/{ids[0]}/review',json={'excluded':False}).json()=={'excluded':False}
+    assert client.get('/api/emails?attention=true&limit=50').json()['total']==1
+    assert client.get('/api/summary').json()['pending_emails']==1
+    assert mail.sync_folder(mailbox,account,b'INBOX','INBOX')==1 and processed==['1']

@@ -103,4 +103,6 @@ def init_db():
             db.execute('ALTER TABLE emails ADD COLUMN html_checked INTEGER NOT NULL DEFAULT 0')
         if 'html_version' not in cols:
             db.execute('ALTER TABLE emails ADD COLUMN html_version INTEGER NOT NULL DEFAULT 0')
+        if 'review_excluded' not in cols:
+            db.execute('ALTER TABLE emails ADD COLUMN review_excluded INTEGER NOT NULL DEFAULT 0')
         db.execute('INSERT OR IGNORE INTO invoice_emails(invoice_id,email_id) SELECT id,email_id FROM invoices WHERE email_id IS NOT NULL')

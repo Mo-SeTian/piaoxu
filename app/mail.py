@@ -287,7 +287,7 @@ def sync_folder(mail, account_id, token, folder):
     if not validity: raise RuntimeError('邮箱未返回 UIDVALIDITY')
     namespace = folder + '\x00' + validity
     with connect() as db:
-        existing = {r['uid']:(r['id'],r['status']) for r in db.execute('SELECT id,uid,status FROM emails WHERE account_id=? AND uidvalidity=?', (account_id, namespace))}
+        existing = {r['uid']:(r['id'],r['status'],r['review_excluded']) for r in db.execute('SELECT id,uid,status,review_excluded FROM emails WHERE account_id=? AND uidvalidity=?', (account_id, namespace))}
         failed = {r['uid'] for r in db.execute('SELECT uid FROM email_sync_failures WHERE account_id=? AND uidvalidity=?',(account_id,namespace))}
     highest = max((int(uid) for uid in existing if uid.isdigit()), default=0)
     query = ('UID', f'{highest+1}:*') if highest else ('ALL',)
@@ -296,12 +296,12 @@ def sync_folder(mail, account_id, token, folder):
     discovered = data[0].split() if data and data[0] else []
     uids = sorted({int(uid) for uid in discovered if uid.isdigit() and int(uid) > highest} |
                   {int(uid) for uid in failed if uid.isdigit()} |
-                  {int(uid) for uid,(_,state) in existing.items() if uid.isdigit() and state in ('待处理','导入失败','发票链接待处理')})
+                  {int(uid) for uid,(_,state,excluded) in existing.items() if uid.isdigit() and not excluded and state in ('待处理','导入失败','发票链接待处理')})
     processed=0; errors=0
     for uid_number in uids:
         uid=str(uid_number)
         old=existing.get(uid)
-        if old and old[1] not in ('待处理','导入失败','发票链接待处理') and uid not in failed: continue
+        if old and (old[2] or (old[1] not in ('待处理','导入失败','发票链接待处理') and uid not in failed)): continue
         try:
             process_message(mail,account_id,uid,namespace,folder,old)
             with connect() as db: db.execute('DELETE FROM email_sync_failures WHERE account_id=? AND uidvalidity=? AND uid=?',(account_id,namespace,uid))
@@ -323,9 +323,10 @@ def reprocess_email(email_id):
         raise MailReprocessError('该邮箱正在同步或处理其他邮件，请稍后重试')
     try:
         with connect() as db:
-            row=db.execute('''SELECT e.id,e.uid,e.uidvalidity,e.folder,e.status,a.id account_id,a.email,a.secret
+            row=db.execute('''SELECT e.id,e.uid,e.uidvalidity,e.folder,e.status,e.review_excluded,a.id account_id,a.email,a.secret
                               FROM emails e JOIN accounts a ON a.id=e.account_id WHERE e.id=?''',(email_id,)).fetchone()
         if not row: raise MailReprocessError('邮件不存在')
+        if row['review_excluded']: raise MailReprocessError('请先在「已排除邮件」中恢复这封邮件')
         mail=None
         try:
             mail=imaplib.IMAP4_SSL('imap.qq.com',993,timeout=30)
