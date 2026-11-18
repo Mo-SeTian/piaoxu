@@ -27,7 +27,7 @@ from .recognition import recognize
 from .formats import validate
 from .email_html import proxy_html_images
 from .download import public_image
-from .service import DUPLICATE_REASON, UNVERIFIED_REASON, assist, cipher, duplicate_invoice, duplicate_reason, export_filename, fill_tax_ids, import_file, now
+from .service import DUPLICATE_REASON, UNVERIFIED_REASON, assist, cipher, duplicate_invoice, duplicate_reason, export_filename, fill_tax_ids, import_file, mail_invoice_status, now
 from .ai import save_settings as save_ai_settings, settings as get_ai_settings
 from . import ai
 from .backup import create_backup, inspect_backup, recover_interrupted_restore, restore_backup
@@ -132,6 +132,10 @@ class InvoiceUpdate(BaseModel):
 
 class InvoiceNoteUpdate(BaseModel):
     note: str
+
+class InvoiceReviewUpdate(BaseModel):
+    excluded: bool
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 class Ids(BaseModel):
     ids: list[int] = Field(min_length=1,max_length=500)
@@ -276,7 +280,7 @@ def invoices(limit: Optional[int]=Query(None,ge=1,le=500), offset: int=Query(0,g
     with connect() as db:
         base='''FROM invoices i LEFT JOIN group_invoices gi ON gi.invoice_id=i.id LEFT JOIN groups g ON g.id=gi.group_id LEFT JOIN emails e ON e.id=i.email_id LEFT JOIN accounts a ON a.id=e.account_id'''
         conditions=[];args=[]
-        if view=='review': conditions.append("(i.recognition_status='识别失败' OR i.duplicate_state='confirmed' OR i.id IN (SELECT duplicate_of FROM invoices WHERE duplicate_of IS NOT NULL AND (recognition_status='识别失败' OR duplicate_state='confirmed')))")
+        if view=='review': conditions.append("(i.recognition_status IN ('识别失败','已排除') OR i.duplicate_state='confirmed' OR i.id IN (SELECT duplicate_of FROM invoices WHERE duplicate_of IS NOT NULL AND recognition_status<>'已排除' AND (recognition_status='识别失败' OR duplicate_state='confirmed')))")
         if limit is not None: conditions.append("i.recognition_status='已识别'")
         if reimbursement!='all': conditions.append('i.reimbursed=?');args.append(int(reimbursement=='reimbursed'))
         tag_conditions=[]
@@ -418,9 +422,26 @@ def refresh_email_status(db, invoice_id):
     email_ids = [r['email_id'] for r in db.execute('SELECT email_id FROM invoice_emails WHERE invoice_id=?',(invoice_id,))]
     for email_id in email_ids:
         statuses = db.execute('SELECT i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON i.id=ie.invoice_id WHERE ie.email_id=?',(email_id,)).fetchall()
-        if statuses:
-            state = '识别失败' if any(r['recognition_status']=='识别失败' and r['duplicate_state']!='confirmed' for r in statuses) else ('重复发票' if any(r['duplicate_state']=='confirmed' for r in statuses) else '已识别')
+        state = mail_invoice_status(statuses)
+        if state:
             db.execute("UPDATE emails SET status=? WHERE id=? AND status NOT IN ('导入失败','待处理','发票链接待处理')",(state,email_id))
+
+
+@app.patch('/api/invoices/{invoice_id}/review')
+def update_invoice_review(invoice_id: int, value: InvoiceReviewUpdate):
+    old, new = ('识别失败','已排除') if value.excluded else ('已排除','识别失败')
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT sha256,recognition_status,duplicate_state,reimbursed FROM invoices WHERE id=?', (invoice_id,)).fetchone()
+        if not row:
+            raise HTTPException(404,'发票不存在')
+        if row['sha256'] != value.sha256 or row['reimbursed'] or row['duplicate_state']=='confirmed' or row['recognition_status'] not in (old,new):
+            raise HTTPException(409,'发票状态已变化，请刷新后重试')
+        if row['recognition_status']==old:
+            db.execute('UPDATE invoices SET recognition_status=? WHERE id=?', (new,invoice_id))
+            refresh_email_status(db,invoice_id)
+    return {'recognition_status':new}
+
 
 def duplicate_for_update(db, row, number):
     same_number = number == row['invoice_number']
@@ -447,6 +468,7 @@ def update_invoice(invoice_id: int, value: InvoiceUpdate):
         row = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
         if not row: raise HTTPException(404,'发票不存在')
         if row['reimbursed']: raise HTTPException(409,'已报销发票不能修改，请先撤销报销标记')
+        if row['recognition_status']=='已排除': raise HTTPException(409,'请先恢复这张发票')
         acknowledged = row['duplicate_state']=='dismissed' and value.invoice_number.strip()==row['invoice_number']
         if value.invoice_number.strip() and not acknowledged and db.execute('SELECT 1 FROM group_invoices WHERE invoice_id=?',(invoice_id,)).fetchone():
             if db.execute('SELECT 1 FROM invoices i JOIN group_invoices gi ON gi.invoice_id=i.id WHERE i.invoice_number=? AND i.id<>?',(value.invoice_number.strip(),invoice_id)).fetchone():
@@ -469,7 +491,8 @@ def update_invoice(invoice_id: int, value: InvoiceUpdate):
                 if match: parts.append(DUPLICATE_REASON)
                 reason = '；'.join(parts)
                 db.execute('UPDATE invoices SET duplicate_of=?,duplicate_state=?,failure_reason=?,recognition_status=? WHERE id=?',
-                           (match['id'] if match else None, 'pending' if match else '', reason, '识别失败' if reason else '已识别', other['id']))
+                           (match['id'] if match else None, 'pending' if match else '', reason,
+                            '已排除' if other['recognition_status']=='已排除' else '识别失败' if reason else '已识别', other['id']))
                 refresh_email_status(db, other['id'])
     return {'ok':True}
 
@@ -480,6 +503,8 @@ def merge_invoice(invoice_id: int, value: MergeInvoice):
         source = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
         target = db.execute('SELECT * FROM invoices WHERE id=?',(value.target_id,)).fetchone()
         if not source or not target: raise HTTPException(404,'发票不存在，请刷新后重试')
+        if any(row['recognition_status']=='已排除' for row in (source,target)):
+            raise HTTPException(409,'请先恢复已排除的发票')
         if source['sha256'] != value.sha256 or target['sha256'] != value.target_sha256:
             raise HTTPException(409,'发票已发生变化，请刷新后重试')
         if invoice_id == value.target_id or target['duplicate_of'] is not None or target['duplicate_state']=='confirmed':
@@ -503,6 +528,7 @@ def resolve_duplicate(invoice_id: int, value: DuplicateDecision):
         row = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
         if not row: raise HTTPException(404,'发票不存在')
         if row['reimbursed']: raise HTTPException(409,'已报销发票不能修改')
+        if row['recognition_status']=='已排除': raise HTTPException(409,'请先恢复这张发票')
         if row['duplicate_state'] not in ('pending','confirmed','unverified') or (row['duplicate_state']!='unverified' and not row['duplicate_of']):
             raise HTTPException(409,'该发票没有待处理的重复提示')
         if row['duplicate_state']=='unverified' and value.decision!='distinct':
@@ -546,6 +572,7 @@ def retry(invoice_id: int):
             row = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
         if not row: raise HTTPException(404,'发票不存在')
         if row['reimbursed']: raise HTTPException(409,'已报销发票不能重新识别')
+        if row['recognition_status']=='已排除': raise HTTPException(409,'请先恢复这张发票')
         fields, reason = recognize(FILES / row['stored_name'])
         fields, reason, suggestion = assist(FILES / row['stored_name'], fields, reason)
         with connect() as db:
@@ -566,6 +593,7 @@ def ai_invoice(invoice_id: int):
             row = db.execute('SELECT * FROM invoices WHERE id=?',(invoice_id,)).fetchone()
         if not row: raise HTTPException(404,'发票不存在')
         if row['reimbursed']: raise HTTPException(409,'已报销发票不能重新识别')
+        if row['recognition_status']=='已排除': raise HTTPException(409,'请先恢复这张发票')
         before = dict(row)
         current = {key: before[key] for key in ('buyer','seller','buyer_tax_id','seller_tax_id','amount_cents','invoice_date','invoice_number')}
         try:
@@ -801,23 +829,54 @@ def sync(account_id: int, background: BackgroundTasks):
 @app.get('/api/summary')
 def summary():
     with connect() as db:
-        failed=db.execute("SELECT count(*) FROM invoices WHERE recognition_status='识别失败' AND duplicate_state<>'confirmed'").fetchone()[0]
-        pending=db.execute("SELECT count(*) FROM emails WHERE status IN ('导入失败','发票链接待处理')").fetchone()[0]
-        counts=db.execute("SELECT count(*) total,COALESCE(sum(CASE WHEN reimbursed=0 THEN 1 ELSE 0 END),0) unpaid,COALESCE(sum(CASE WHEN reimbursed=0 THEN amount_cents ELSE 0 END),0) unpaid_amount FROM invoices WHERE recognition_status='已识别'").fetchone()
-        untagged=db.execute("SELECT count(*) FROM invoices i WHERE recognition_status='已识别' AND NOT EXISTS (SELECT 1 FROM invoice_tags it WHERE it.invoice_id=i.id)").fetchone()[0]
-    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],'unreimbursed':counts['unpaid'],'unreimbursed_amount_cents':counts['unpaid_amount'],'untagged_invoices':untagged}
+        return invoice_summary(db)
+
+
+def invoice_summary(db):
+    failed=db.execute("SELECT count(*) FROM invoices WHERE recognition_status='识别失败' AND duplicate_state<>'confirmed'").fetchone()[0]
+    pending=db.execute("SELECT count(*) FROM emails WHERE status IN ('导入失败','发票链接待处理')").fetchone()[0]
+    counts=db.execute('''SELECT count(*) total, COALESCE(sum(amount_cents),0) total_amount,
+        count(*) FILTER (WHERE reimbursed=0) unpaid,
+        COALESCE(sum(amount_cents) FILTER (WHERE reimbursed=0),0) unpaid_amount
+        FROM invoices WHERE recognition_status='已识别' ''').fetchone()
+    untagged=db.execute("SELECT count(*) FROM invoices i WHERE recognition_status='已识别' AND NOT EXISTS (SELECT 1 FROM invoice_tags it WHERE it.invoice_id=i.id)").fetchone()[0]
+    return {'failed_invoices':failed,'pending_emails':pending,'invoices':counts['total'],
+            'total_amount_cents':counts['total_amount'],'unreimbursed':counts['unpaid'],
+            'unreimbursed_amount_cents':counts['unpaid_amount'],'untagged_invoices':untagged}
+
+
+@app.get('/api/dashboard')
+def dashboard():
+    today=date.today()
+    current=today.year*12+today.month-1
+    months=[f'{index//12:04d}-{index%12+1:02d}' for index in range(current-5,current+1)]
+    with connect() as db:
+        db.execute('BEGIN')
+        summary=invoice_summary(db)
+        grouped={row['month']:dict(row) for row in db.execute('''
+            SELECT substr(invoice_date,1,7) month, count(*) count, COALESCE(sum(amount_cents),0) amount_cents
+            FROM invoices WHERE recognition_status='已识别' AND invoice_date>=? AND invoice_date<=?
+            GROUP BY month''',(months[0]+'-01',today.isoformat()))}
+        recent=[dict(row) for row in db.execute('''
+            SELECT seller,original_name,amount_cents,imported_at,reimbursed FROM invoices
+            WHERE recognition_status='已识别' ORDER BY imported_at DESC,id DESC LIMIT 5''')]
+        groups=db.execute('SELECT count(*) FROM groups').fetchone()[0]
+    return {'summary':summary,'monthly':[grouped.get(month,{'month':month,'count':0,'amount_cents':0}) for month in months],
+            'recent':recent,'group_count':groups}
 
 @app.get('/api/emails')
 def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,le=100), offset: int=Query(0,ge=0), invoice_status: Literal['all','invoice','has','suspected','none','recognized','failed','deleted','duplicate','pending','processing_failed','link_pending']='all', attention: bool=False):
     with connect() as db:
         query='''SELECT e.id,e.account_id,e.sender,e.subject,e.received_at,e.status,e.folder,a.name account_name,
                         COALESCE(c.invoice_count,0) invoice_count,COALESCE(c.recognized_count,0) recognized_count,
-                        COALESCE(c.failed_count,0) failed_count,COALESCE(c.duplicate_count,0) duplicate_count
+                        COALESCE(c.failed_count,0) failed_count,COALESCE(c.duplicate_count,0) duplicate_count,
+                        COALESCE(c.excluded_count,0) excluded_count
                  FROM emails e JOIN accounts a ON e.account_id=a.id
-                 LEFT JOIN (SELECT ie.email_id,COUNT(*) invoice_count,
+                 LEFT JOIN (SELECT ie.email_id,COUNT(*) FILTER (WHERE i.recognition_status<>'已排除') invoice_count,
+                            COUNT(*) FILTER (WHERE i.recognition_status='已排除') excluded_count,
                             SUM(CASE WHEN i.recognition_status='已识别' THEN 1 ELSE 0 END) recognized_count,
                             SUM(CASE WHEN i.recognition_status='识别失败' AND i.duplicate_state<>'confirmed' THEN 1 ELSE 0 END) failed_count,
-                            SUM(CASE WHEN i.duplicate_state='confirmed' THEN 1 ELSE 0 END) duplicate_count
+                            SUM(CASE WHEN i.duplicate_state='confirmed' AND i.recognition_status<>'已排除' THEN 1 ELSE 0 END) duplicate_count
                             FROM invoice_emails ie JOIN invoices i ON i.id=ie.invoice_id GROUP BY ie.email_id) c ON c.email_id=e.id'''
         where=[];args=[]
         if account_id: where.append('e.account_id=?');args.append(account_id)
@@ -825,7 +884,7 @@ def emails(account_id: Optional[int]=None, limit: Optional[int]=Query(None,ge=1,
         filters={'invoice':'COALESCE(c.invoice_count,0)>0',
                  'has':'COALESCE(c.recognized_count,0)>0 OR COALESCE(c.duplicate_count,0)>0',
                  'suspected':'COALESCE(c.invoice_count,0)>0 AND COALESCE(c.recognized_count,0)=0 AND COALESCE(c.duplicate_count,0)=0',
-                 'none':"COALESCE(c.invoice_count,0)=0 AND e.status NOT IN ('发票已删除','待处理','导入失败','发票链接待处理','识别失败')",
+                 'none':"COALESCE(c.invoice_count,0)=0 AND COALESCE(c.excluded_count,0)=0 AND e.status NOT IN ('发票已删除','待处理','导入失败','发票链接待处理','识别失败')",
                  'recognized':'COALESCE(c.recognized_count,0)>0','failed':'COALESCE(c.failed_count,0)>0',
                  'deleted':"COALESCE(c.invoice_count,0)=0 AND e.status='发票已删除'",
                  'duplicate':'COALESCE(c.duplicate_count,0)>0',
@@ -848,10 +907,11 @@ def email_detail(email_id: int):
         result=dict(row)
         result['attachments']=[dict(r) for r in db.execute('SELECT name,content_type,size FROM email_attachments WHERE email_id=?',(email_id,))]
         result['invoices']=[dict(r) for r in db.execute('SELECT i.id,i.original_name,i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id WHERE ie.email_id=?',(email_id,))]
-        result['invoice_count']=len(result['invoices'])
+        result['excluded_count']=sum(i['recognition_status']=='已排除' for i in result['invoices'])
+        result['invoice_count']=len(result['invoices'])-result['excluded_count']
         result['recognized_count']=sum(i['recognition_status']=='已识别' for i in result['invoices'])
         result['failed_count']=sum(i['recognition_status']=='识别失败' and i['duplicate_state']!='confirmed' for i in result['invoices'])
-        result['duplicate_count']=sum(i['duplicate_state']=='confirmed' for i in result['invoices'])
+        result['duplicate_count']=sum(i['duplicate_state']=='confirmed' and i['recognition_status']!='已排除' for i in result['invoices'])
         images=[]; cached={}
         def placeholder(url):
             if url in cached: return cached[url]

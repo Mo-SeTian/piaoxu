@@ -108,6 +108,17 @@ def duplicate_invoice(db, number, exclude_id=0):
     return db.execute('SELECT id,original_name FROM invoices WHERE invoice_number=? AND id<>? AND (duplicate_of IS NULL OR duplicate_of<>?) ORDER BY id LIMIT 1',(number,exclude_id,exclude_id)).fetchone()
 
 
+def mail_invoice_status(rows):
+    active = [row for row in rows if row['recognition_status'] != '已排除']
+    if any(row['recognition_status']=='识别失败' and row['duplicate_state']!='confirmed' for row in active):
+        return '识别失败'
+    if any(row['duplicate_state']=='confirmed' for row in active):
+        return '重复发票'
+    if active:
+        return '已识别'
+    return '发票已排除' if rows else None
+
+
 DUPLICATE_REASON = '发票号码与已有发票相同，请核对是否重复'
 UNVERIFIED_REASON = '未识别发票号码，无法判断是否重复，请核对'
 

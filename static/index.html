@@ -7,8 +7,9 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=1">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=1">
   <link rel="preload" href="/fonts/noto-serif-sc-ui.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/style.css?v=51">
+  <link rel="stylesheet" href="/style.css?v=52">
   <link rel="stylesheet" href="/tags.css?v=2">
+  <link rel="stylesheet" href="/dashboard.css?v=1">
 </head>
 <body data-input-mode="pointer">
   <section class="login-screen" id="login-screen" hidden>
@@ -31,7 +32,8 @@
       <div class="brand"><img class="brand-icon" src="/brand-icon.png?v=1" width="40" height="40" alt=""><span>票序</span></div>
       <div class="nav-label">票据管理</div>
       <nav id="main-nav" aria-label="主导航">
-        <button data-page="invoices" class="active"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg>发票库</button>
+        <button data-page="home" class="active" aria-current="page"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=10#house"></use></svg>首页</button>
+        <button data-page="invoices"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#files"></use></svg>发票库</button>
         <button data-page="groups"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#folder"></use></svg>报销组</button>
         <button data-page="emails"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#mail"></use></svg>全部邮件</button>
         <button data-page="failed"><svg aria-hidden="true" class="nav-icon"><use href="/icons.svg?v=6#circle-alert"></use></svg>识别失败 <b id="failed-count"></b></button>
@@ -45,11 +47,12 @@
       <div class="side-foot" id="side-foot">还未连接邮箱</div>
     </aside>
     <div id="nav-backdrop" hidden aria-hidden="true"></div>
-    <main><header><span id="breadcrumb">发票库</span></header><div class="content" id="content"></div></main>
+    <main><header><span id="breadcrumb">首页</span></header><div class="content" id="content"></div></main>
   </div>
   <dialog id="dialog" aria-labelledby="dialog-title"><form method="dialog" id="dialog-form"></form></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/tags.js?v=2" defer></script>
-  <script src="/app.js?v=52" defer></script>
+  <script src="/dashboard.js?v=1" defer></script>
+  <script src="/app.js?v=54" defer></script>
 </body>
 </html>

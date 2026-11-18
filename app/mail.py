@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 from .db import connect
 from .download import candidates, download
 from .email_html import HTML_VERSION, prepare_html
-from .service import DUPLICATE_REASON, cipher, import_file, matching_mail_original, now
+from .service import DUPLICATE_REASON, cipher, import_file, mail_invoice_status, matching_mail_original, now
 from .notifications import queue_notification
 from .merging import merge_records
 
@@ -116,7 +116,7 @@ def merge_existing_formats(email_id):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         candidates = db.execute("""SELECT i.* FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id
-            WHERE ie.email_id=? AND i.duplicate_state='pending'
+            WHERE ie.email_id=? AND i.duplicate_state='pending' AND i.recognition_status<>'已排除'
             AND i.reimbursed=0 AND i.has_local_upload=0 AND i.export_name=''
             AND NOT EXISTS (SELECT 1 FROM group_invoices g WHERE g.invoice_id=i.id)
             AND NOT EXISTS (SELECT 1 FROM invoice_originals o WHERE o.invoice_id=i.id)""", (email_id,)).fetchall()
@@ -267,9 +267,8 @@ def process_message(mail, account_id, uid, namespace, folder, old=None, force=Fa
         existing_ids = {merged.get(ident,ident) for ident in existing_ids} - created_ids
     with connect() as db:
         statuses=db.execute('SELECT i.id,i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON ie.invoice_id=i.id WHERE ie.email_id=?',(email_id,)).fetchall()
-        needs_review=any(r['recognition_status']=='识别失败' and r['duplicate_state']!='confirmed' for r in statuses)
-        confirmed=any(r['duplicate_state']=='confirmed' for r in statuses)
-        state=('发票链接待处理' if links and not attachments else '导入失败') if errors else ('识别失败' if needs_review else ('重复发票' if confirmed else ('已识别' if statuses else ('发票链接待处理' if '发票' in subject and 'http' in body_text else '普通邮件'))))
+        state=('发票链接待处理' if links and not attachments else '导入失败') if errors else (
+            mail_invoice_status(statuses) or ('发票链接待处理' if '发票' in subject and 'http' in body_text else '普通邮件'))
         db.execute('UPDATE emails SET status=? WHERE id=?',(state,email_id))
         if not force:
             fresh = [row for row in statuses if row['id'] in created_ids]

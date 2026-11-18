@@ -2,7 +2,7 @@
 import os
 import re
 from .db import FILES, connect
-from .service import DUPLICATE_REASON, duplicate_invoice
+from .service import DUPLICATE_REASON, duplicate_invoice, mail_invoice_status
 
 PREFIX = '.piaoxu-delete-'
 STORED_NAME = re.compile(r'^[0-9a-f]{64}\.(?:pdf|ofd|xml|jpg|jpeg|png)$')
@@ -64,12 +64,11 @@ def delete_invoices(items):
                     parts.append(DUPLICATE_REASON)
                 reason = '；'.join(parts)
                 db.execute('UPDATE invoices SET duplicate_of=?,duplicate_state=?,failure_reason=?,recognition_status=? WHERE id=?',
-                           (duplicate['id'] if duplicate else None, 'pending' if duplicate else '', reason, '识别失败' if reason else '已识别', row['id']))
+                           (duplicate['id'] if duplicate else None, 'pending' if duplicate else '', reason,
+                            '已排除' if row['recognition_status']=='已排除' else '识别失败' if reason else '已识别', row['id']))
             for email_id in email_ids:
                 statuses = db.execute('SELECT i.recognition_status,i.duplicate_state FROM invoices i JOIN invoice_emails ie ON i.id=ie.invoice_id WHERE ie.email_id=?', (email_id,)).fetchall()
-                state = ('识别失败' if any(row['recognition_status']=='识别失败' and row['duplicate_state']!='confirmed' for row in statuses)
-                         else '重复发票' if any(row['duplicate_state']=='confirmed' for row in statuses)
-                         else '已识别' if statuses else '发票已删除')
+                state = mail_invoice_status(statuses) or '发票已删除'
                 db.execute("UPDATE emails SET status=? WHERE id=? AND status NOT IN ('导入失败','待处理','发票链接待处理')", (state, email_id))
     except Exception:
         for original, target in reversed(staged):

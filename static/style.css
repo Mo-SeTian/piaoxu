@@ -156,6 +156,9 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .tab.active{color:var(--ink)}.tab.active:after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--ink)}
 .invoice-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px 0 10px}
 .invoice-search-hint{margin:0 0 14px;font-size:11px;line-height:1.8}
+.excluded-invoices{margin-top:24px}
+.excluded-invoices>summary{min-height:44px;line-height:44px;font-size:16px;font-weight:500}
+.excluded-invoices>summary .muted{margin-left:4px}
 .search-field{position:relative;display:flex;align-items:center;gap:8px;min-width:0;max-width:285px;flex:1;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
 .search-field .button-icon{color:var(--muted);width:15px;height:15px}
 .search-field:focus-within{border-color:var(--focus)}body:not([data-input-mode="pointer"]) .search-field:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}
