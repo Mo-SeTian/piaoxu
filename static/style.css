@@ -403,7 +403,7 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   #main-nav{padding-top:calc(86px + env(safe-area-inset-top,0px));padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
   #main-nav button{min-height:48px}
   .content{padding-top:calc(22px + env(safe-area-inset-top,0px));padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
-  .head h1{padding-left:48px}
+  .head h1,body[data-page="invoices"] .head .sub{padding-left:48px}
 }
 @media(max-width:640px),(orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
   .invoice-list.has-selection{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
