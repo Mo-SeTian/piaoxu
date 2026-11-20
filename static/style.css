@@ -127,6 +127,7 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .email-row-meta .muted{white-space:nowrap}.email-row-meta .button{font-size:12px;min-height:34px;padding:7px 12px;border-color:var(--line)}
 .email-feedback{margin-top:10px;color:var(--brown);font-size:12px;line-height:1.7;overflow-wrap:anywhere}.email-feedback:empty{display:none}.email-labels{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
 .email-tag,.badge,.status{display:inline-flex;align-items:center;font-size:12px;line-height:1.5;white-space:nowrap;color:var(--ink);background:var(--mist);padding:4px 9px;border-radius:999px;font-weight:400}
+.badge,.status{gap:5px}
 .email-tag.invoice,.email-tag.neutral{color:var(--muted)}.email-tag.success{color:#355b46;background:#edf5f0}
 .email-tag.failure,.email-tag.pending{color:var(--brown);background:#fae9de}.badge.fail{color:var(--brown)}
 .badge.gray,.status.done{background:#edf5f0;color:#355b46}
@@ -204,7 +205,7 @@ body[data-page="emails"] .row .button.link{display:-webkit-box;-webkit-line-clam
 .invoice-date{text-align:right;color:var(--muted);font-size:12px!important;white-space:nowrap;font-variant-numeric:tabular-nums}
 .amount{text-align:right;font-weight:500;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
 .invoice-status{white-space:nowrap;font-size:12px}
-.invoice-status .status,.badge{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;font-size:11px;border-radius:999px}
+.invoice-status .status,.badge{font-size:11px}
 .status-dot{width:5px;height:5px;border-radius:50%;background:var(--muted);flex:none}
 .status.done .status-dot,.badge.gray .status-dot{background:#355b46;box-shadow:0 0 0 1.5px rgba(53,91,70,0.25)}
 .invoice-list-footer{display:flex;justify-content:space-between;gap:12px;padding:18px 0;color:var(--muted);font-size:11px}
