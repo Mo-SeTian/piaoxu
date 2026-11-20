@@ -352,7 +352,7 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
 }
 @media(min-width:941px) and (max-width:1120px){.invoice-layout{display:block}.invoice-preview{display:none}}
 @media(max-width:940px), (orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
-  .shell{display:block}.shell>aside{position:relative;display:flex;flex-direction:row;align-items:center;gap:10px;height:64px;padding:10px 16px;border:0}
+  .shell{display:block;--mobile-header-height:57px}.shell>aside{position:relative;display:flex;flex-direction:row;align-items:center;gap:10px;height:64px;padding:10px 16px;border:0}
   #nav-toggle{display:flex;position:relative;z-index:34;width:40px;height:40px}.brand{position:relative;z-index:34;min-height:40px;padding:0;font-size:25px}.brand-icon{width:36px;height:36px}
   .shell>aside.menu-open:before{content:"";position:fixed;z-index:33;inset:0 auto auto 0;width:min(288px,calc(100vw - 40px));height:76px;background:var(--surface);pointer-events:none}
   .nav-label,.side-foot{display:none}
@@ -369,11 +369,22 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
   .settings-section{grid-template-columns:minmax(150px,.65fr) minmax(0,1.35fr);gap:26px}
 }
 @media(max-width:640px){
-  h1{font-size:34px;letter-spacing:-.025em}.content{padding:18px 18px 28px}.head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 12px;margin-bottom:24px}.head>div:first-child{display:contents}.head h1{grid-column:1;grid-row:1}.head .sub{grid-column:1/-1;margin-top:0;font-size:12px;line-height:1.8}.head .actions{grid-column:2;grid-row:1}.head .header-export{display:none}
+  .shell{--mobile-header-height:46px}
+  h1{font-size:34px;letter-spacing:-.025em}
+  .content{
+    --page-gutter:18px;
+    --content-gutter:var(--page-gutter);
+    padding:18px max(var(--content-gutter),env(safe-area-inset-right)) 28px max(var(--content-gutter),env(safe-area-inset-left));
+  }
+  .head{margin-bottom:24px}.head .header-export{display:none}
   .button{min-height:44px;font-size:13px;padding:10px 15px}.button.link,.button.text-button{min-height:40px}.icon-button{width:44px;height:44px}
   .invoice-summary{display:block;margin-bottom:22px}.invoice-metrics{grid-template-columns:repeat(2,minmax(0,1fr));padding:16px 18px;gap:14px 20px;margin-bottom:14px}.invoice-metrics>div:first-child{grid-column:1/-1}.invoice-metrics p{font-size:11px;margin-bottom:6px}.invoice-metrics strong{font-size:23px}.invoice-metrics strong.metric-amount{font-size:27px}.invoice-metrics small{font-size:11px;margin-left:4px}
   .review-summary{width:100%;padding:14px 16px;border-radius:18px}.review-summary strong{display:inline;font-size:13px}.review-summary small{display:inline;margin-top:0;margin-left:9px;font-size:11px}.review-summary .button-icon{width:18px;height:18px}
-  body[data-page="invoices"] .content{padding-left:max(8px,env(safe-area-inset-left));padding-right:max(8px,env(safe-area-inset-right))}
+  body[data-page="invoices"] .content{--content-gutter:8px}
+  body[data-page="invoices"] .head{
+    margin-left:calc(max(var(--page-gutter),env(safe-area-inset-left)) - max(var(--content-gutter),env(safe-area-inset-left)));
+    margin-right:calc(max(var(--page-gutter),env(safe-area-inset-right)) - max(var(--content-gutter),env(safe-area-inset-right)));
+  }
   .invoice-list{padding:0 8px}.invoice-tabs{gap:26px}.tab{min-height:44px;font-size:13px}.invoice-toolbar{padding:16px 0 8px;gap:10px;flex-wrap:wrap}.search-field{max-width:none;height:44px;flex-basis:100%}.search-field input{height:40px;font-size:16px}.search-field input::placeholder{font-size:12px}.invoice-tools{width:100%;justify-content:space-between}.invoice-tools>.button,.invoice-sort-value{min-height:44px}.date-heading .text-button{min-height:44px}
   .invoice-table{border:0;border-radius:0;background:none;overflow:visible}
   .invoice-table table,.invoice-table thead,.invoice-table tbody{display:block;width:100%}.invoice-table colgroup{display:none}.invoice-table thead tr{display:flex;min-height:44px;align-items:center}.invoice-table thead th{display:none}.invoice-table thead th:first-child{display:flex;align-items:center;height:44px;padding:0}.invoice-table thead th:first-child:after{content:"全选当前列表";margin-left:8px;color:var(--muted);font-size:12px}
@@ -400,14 +411,18 @@ dialog:has(.manual-preview),dialog:has(.upload-preview-list){width:min(780px,cal
 }
 @media(max-width:640px), (orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
   .shell>aside{height:0;padding:0}
-  #nav-toggle{position:absolute;left:12px;top:calc(22px + env(safe-area-inset-top,0px));width:44px;height:46px}
+  #nav-toggle{position:absolute;left:12px;top:calc(22px + env(safe-area-inset-top,0px));width:44px;height:var(--mobile-header-height)}
   .brand{display:none}.shell>aside.menu-open #nav-toggle{position:fixed}
-  .shell>aside.menu-open .brand{display:flex;position:fixed;left:70px;top:calc(22px + env(safe-area-inset-top,0px));height:46px}
+  .shell>aside.menu-open .brand{display:flex;position:fixed;left:70px;top:calc(22px + env(safe-area-inset-top,0px));height:var(--mobile-header-height)}
   .shell>aside.menu-open:before{height:calc(80px + env(safe-area-inset-top,0px))}
   #main-nav{padding-top:calc(86px + env(safe-area-inset-top,0px));padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
   #main-nav button{min-height:48px}
   .content{padding-top:calc(22px + env(safe-area-inset-top,0px));padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
-  .head h1,body[data-page="invoices"] .head .sub{padding-left:48px}
+  .head{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:minmax(var(--mobile-header-height),auto);gap:6px 12px}
+  .head h1{grid-column:1;grid-row:1;padding-left:48px}.head .actions{grid-column:2;grid-row:1}
+  .head>div:first-child{display:contents}
+  .head .sub{grid-column:1/-1;margin-top:0;font-size:12px;line-height:1.8}
+  body[data-page="home"] .head .sub,body[data-page="invoices"] .head .sub{padding-left:48px}
 }
 @media(max-width:640px),(orientation:landscape) and (max-width:950px) and (max-height:500px) and (pointer:coarse){
   .invoice-list.has-selection{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
